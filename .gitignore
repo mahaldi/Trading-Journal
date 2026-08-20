@@ -1,0 +1,30 @@
+node_modules
+dist
+.DS_Store
+*.local
+
+# ─────────────────────────────────────────────────────────────
+# JURNAL — jangan pernah masuk git.
+#
+# Dua alasan:
+#
+# 1. Privasi. trades.json memuat entry, size, leverage, P&L, dan catatan
+#    psikologi Anda; images/ memuat screenshot chart. Sekali ter-push,
+#    menghapusnya bukan sekadar `git rm` — perlu menulis ulang riwayat.
+#
+# 2. Git tidak pernah lupa. Setiap versi gambar tersimpan permanen, bahkan
+#    setelah filenya dihapus. Mengompres gambar justru MEMBESARKAN repo,
+#    karena versi lama tetap hidup di riwayat.
+#
+# Backup jurnal ditangani di luar git: salin folder data/, atau taruh di
+# iCloud/Dropbox dan arahkan lewat DATA_DIR (lihat README).
+# ─────────────────────────────────────────────────────────────
+data/
+*.backup-*.json
+images-original-*/
+
+# Config sementara buatan Vite. Vite mengompilasi vite.config.js ke file
+# .mjs di folder yang sama, mengimpornya, lalu menghapusnya. Kalau proses
+# mati mendadak (Ctrl+C, crash, kill), file ini tertinggal. Aman dihapus.
+vite.config.js.timestamp-*
+vite.config.*.timestamp-*
