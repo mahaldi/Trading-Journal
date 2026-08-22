@@ -3,9 +3,11 @@ import PairAutocomplete from './PairAutocomplete'
 import PositionSizeInput from './PositionSizeInput'
 import ScreenshotSlots, { normalize as normalizeShots } from './ScreenshotSlots'
 import TagInput from './TagInput'
+import PartialClose from './PartialClose'
+import ExitList from './ExitList'
 import { Segmented, Confirm } from './ui'
 import { deriveTrade, deviationLabel, EMOTIONS, TIMEFRAMES } from '../lib/calc'
-import { money, rVal, stamp, todayISO } from '../lib/format'
+import { money, price as fmtPrice, rVal, size as fmtSize, stamp, todayISO } from '../lib/format'
 import { baseUnitShort } from '../lib/pairs'
 
 const emptyForm = () => ({
@@ -31,16 +33,22 @@ const emptyForm = () => ({
   notes: '',
   closeNotes: '',
   shots: { setup: [], result: [] },
+  exits: [],
+  slAfter: null,
   history: [],
   createdAt: null,
 })
 
 /**
  * Panel entri 520px dari kanan. Dashboard tetap terlihat di belakang.
- * Mode: 'create' | 'edit' | 'close' (menutup posisi yang berjalan).
+ * Mode: 'create' | 'edit' | 'close' (menutup penuh) | 'partial' (tutup sebagian).
+ *
+ * Untuk posisi yang masih berjalan, ketiga mode terakhir bisa ditukar langsung
+ * di dalam panel lewat segmented "Edit rencana · Sebagian · Penuh".
  */
-export default function TradeForm({ open, mode = 'create', trade, pairIndex, tagSuggestions, tagStats, onSave, onClose, onLightbox }) {
+export default function TradeForm({ open, mode = 'create', trade, pairIndex, tagSuggestions, tagStats, onSave, onPartialExit, onClose, onLightbox }) {
   const [f, setF] = useState(emptyForm)
+  const [view, setView] = useState(mode)
   const [dirty, setDirty] = useState(false)
   const [confirmClose, setConfirmClose] = useState(false)
   const panelRef = useRef(null)
@@ -66,11 +74,14 @@ export default function TradeForm({ open, mode = 'create', trade, pairIndex, tag
         status: mode === 'close' ? 'closed' : trade.status,
         closeDate: trade.closeDate || todayISO(),
         tags: trade.tags || [],
+        exits: trade.exits || [],
+        slAfter: trade.slAfter ?? null,
         history: trade.history || [],
       })
     } else {
       setF(emptyForm())
     }
+    setView(mode)
     setDirty(false)
   }, [open, trade, mode])
 
@@ -80,12 +91,16 @@ export default function TradeForm({ open, mode = 'create', trade, pairIndex, tag
   }
 
   const isOpenPos = f.status === 'open'
+  // Posisi berjalan yang tersimpan — dasar untuk mode tutup sebagian.
+  const runningTrade = trade && trade.status === 'open' ? trade : null
+  const running = useMemo(() => (runningTrade ? deriveTrade(runningTrade) : null), [runningTrade])
+  const hasExits = (running?.exitCount ?? 0) > 0
   const d = useMemo(
     () => deriveTrade({ ...f, pnlOverride: f.pnlOverride === '' ? null : f.pnlOverride }),
     [f]
   )
   const computedNet = useMemo(() => deriveTrade({ ...f, pnlOverride: null }).netPnl, [f])
-  const dev = deviationLabel(d.deviationR)
+  const dev = deviationLabel(d.deviationR, { scaled: d.exitCount > 1 || hasExits })
   const unit = baseUnitShort(f.pair)
 
   const valid = f.pair.trim() && Number.isFinite(d.entry) && Number.isFinite(d.size) && d.size > 0
@@ -128,6 +143,8 @@ export default function TradeForm({ open, mode = 'create', trade, pairIndex, tag
       tp: numOrNull(f.tp),
       markPrice: f.status === 'open' ? numOrNull(f.markPrice) : null,
       pnlOverride: f.pnlOverride === '' ? null : numOrNull(f.pnlOverride),
+      exits: f.exits || [],
+      slAfter: numOrNull(f.slAfter),
       tags,
       emotion: f.emotion,
       notes: f.notes,
@@ -135,6 +152,11 @@ export default function TradeForm({ open, mode = 'create', trade, pairIndex, tag
       shots: normalizeShots(f.shots),
       history,
     }, isNew)
+  }
+
+  function handlePartial(leg) {
+    if (!runningTrade) return
+    onPartialExit(runningTrade, leg)
   }
 
   function requestClose() {
@@ -160,8 +182,13 @@ export default function TradeForm({ open, mode = 'create', trade, pairIndex, tag
 
   if (!open) return null
 
-  const title = mode === 'close' ? 'Tutup trade' : mode === 'edit' ? 'Ubah trade' : 'Catat trade'
-  const kicker = mode === 'close' ? 'Isi Hasil' : mode === 'edit' ? 'Edit Entri' : 'Entri Baru'
+  const TITLES = {
+    close: { title: 'Tutup trade', kicker: 'Isi Hasil' },
+    partial: { title: 'Tutup sebagian posisi', kicker: 'Scale Out' },
+    edit: { title: 'Ubah trade', kicker: 'Edit Entri' },
+    create: { title: 'Catat trade', kicker: 'Entri Baru' },
+  }
+  const { title, kicker } = TITLES[view] || TITLES.create
 
   return (
     <>
@@ -179,20 +206,65 @@ export default function TradeForm({ open, mode = 'create', trade, pairIndex, tag
             <button className="btn btn-secondary btn-icon" onClick={requestClose} title="Tutup (Esc)">✕</button>
           </div>
 
+          {/* Tiga mode untuk posisi berjalan — menutup 80% bukan "menutup trade". */}
+          {runningTrade && (
+            <Segmented
+              options={[
+                { value: 'edit', label: 'Edit rencana' },
+                { value: 'partial', label: '◗ Sebagian' },
+                { value: 'close', label: 'Penuh' },
+              ]}
+              value={view}
+              onChange={(v) => {
+                setView(v)
+                setF((prev) => ({ ...prev, status: v === 'close' ? 'closed' : 'open' }))
+              }}
+              style={{ marginBottom: 'var(--space-6)' }}
+            />
+          )}
+
+          {view === 'partial' && runningTrade && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+              <section>
+                <div className="section-step">1 · Berapa yang keluar</div>
+                <PartialClose trade={runningTrade} onSubmit={handlePartial} onCancel={requestClose} />
+              </section>
+
+              {hasExits && (
+                <section>
+                  <div className="section-step">2 · Exit yang sudah tercatat</div>
+                  <div className="inset-box" style={{ padding: 'var(--space-4)' }}>
+                    <ExitList trade={runningTrade} d={running} />
+                  </div>
+                </section>
+              )}
+
+              <p style={{ fontSize: 11, lineHeight: 1.6, color: 'var(--color-neutral-600)', margin: 0 }}>
+                Trade tetap satu baris di jurnal — yang bertambah adalah daftar exit-nya.
+                R aktual dihitung sebagai rata-rata tertimbang semua exit, dan baru masuk
+                Net PnL serta Win Rate setelah sisa posisi ditutup.
+              </p>
+            </div>
+          )}
+
+          {view !== 'partial' && (
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
             {/* ── 1 · Data Dasar ── */}
             <section>
               <div className="section-step">1 · Data Dasar</div>
 
-              <Segmented
-                options={[
-                  { value: 'open', label: '● Berjalan' },
-                  { value: 'closed', label: '✓ Selesai' },
-                ]}
-                value={f.status}
-                onChange={(v) => set({ status: v, closeDate: v === 'closed' ? f.closeDate || todayISO() : null })}
-                style={{ marginBottom: 'var(--space-3)' }}
-              />
+              {!runningTrade && (
+                <Segmented
+                  options={[
+                    { value: 'open', label: '● Berjalan' },
+                    { value: 'closed', label: '✓ Selesai' },
+                  ]}
+                  value={f.status}
+                  onChange={(v) => set({ status: v, closeDate: v === 'closed' ? f.closeDate || todayISO() : null })}
+                  style={{ marginBottom: 'var(--space-3)' }}
+                />
+              )}
 
               <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 'var(--space-3)' }}>
                 <div className="field">
@@ -202,7 +274,7 @@ export default function TradeForm({ open, mode = 'create', trade, pairIndex, tag
                     value={f.pair}
                     onChange={(v) => set({ pair: v })}
                     index={pairIndex}
-                    autoFocus={mode !== 'close'}
+                    autoFocus={view === 'create'}
                   />
                 </div>
                 <div className="field">
@@ -244,12 +316,18 @@ export default function TradeForm({ open, mode = 'create', trade, pairIndex, tag
                   <input id="f-entry" className="input mono" inputMode="decimal" value={f.entry} onChange={(e) => set({ entry: e.target.value })} placeholder="64210" />
                 </div>
                 <div className="field" style={{ opacity: isOpenPos ? 0.4 : 1 }}>
-                  <label htmlFor="f-exit">Exit Price {isOpenPos && <span style={{ color: 'var(--color-neutral-600)' }}>· terkunci</span>}</label>
+                  <label htmlFor="f-exit">
+                    {hasExits ? 'Exit sisa posisi' : 'Exit Price'}
+                    {isOpenPos && <span style={{ color: 'var(--color-neutral-600)' }}> · terkunci</span>}
+                    {!isOpenPos && hasExits && d.remainingSize != null && (
+                      <span style={{ color: 'var(--color-neutral-600)' }}> · {fmtSize(d.remainingSize)} {unit}</span>
+                    )}
+                  </label>
                   <input
                     id="f-exit" className="input mono" inputMode="decimal" disabled={isOpenPos}
                     value={isOpenPos ? '' : f.exit}
                     onChange={(e) => set({ exit: e.target.value })}
-                    placeholder={isOpenPos ? 'terisi saat ditutup' : '65480'}
+                    placeholder={isOpenPos ? 'terisi saat ditutup' : hasExits ? fmtPrice(d.entry) : '65480'}
                     style={mode === 'close' ? { borderColor: 'var(--color-accent)' } : undefined}
                   />
                 </div>
@@ -269,7 +347,7 @@ export default function TradeForm({ open, mode = 'create', trade, pairIndex, tag
                 </div>
 
                 <div className="field">
-                  <label htmlFor="f-fees">Fees</label>
+                  <label htmlFor="f-fees">Fees{hasExits && <span style={{ color: 'var(--color-neutral-600)' }}> · exit terakhir saja</span>}</label>
                   <input id="f-fees" className="input mono" inputMode="decimal" value={f.fees} onChange={(e) => set({ fees: e.target.value })} placeholder="8.20" />
                 </div>
 
@@ -313,6 +391,15 @@ export default function TradeForm({ open, mode = 'create', trade, pairIndex, tag
                 </div>
               </div>
 
+              {hasExits && (
+                <div className="inset-box" style={{ marginTop: 'var(--space-3)', padding: 'var(--space-4)' }}>
+                  <div className="metric-label" style={{ fontSize: 10, marginBottom: 'var(--space-2)' }}>
+                    {running.exitCount} exit sebelumnya
+                  </div>
+                  <ExitList trade={{ ...runningTrade, ...f }} compact />
+                </div>
+              )}
+
               {/* Bar ringkasan R:R — umpan balik langsung */}
               <div className="inset-box" style={{ marginTop: 'var(--space-3)' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1px 1fr' }}>
@@ -329,7 +416,7 @@ export default function TradeForm({ open, mode = 'create', trade, pairIndex, tag
                   </div>
                   <div style={{ background: 'var(--color-neutral-800)' }} />
                   <div style={{ padding: '8.4px 11.2px' }}>
-                    <div className="metric-label" style={{ fontSize: 10 }}>Aktual · dari exit</div>
+                    <div className="metric-label" style={{ fontSize: 10 }}>Aktual · {hasExits ? 'tertimbang' : 'dari exit'}</div>
                     <div
                       className="mono"
                       style={{ fontSize: 19, color: d.actualR == null ? 'var(--color-neutral-600)' : d.actualR >= 0 ? 'var(--color-profit)' : 'var(--color-loss)' }}
@@ -442,6 +529,7 @@ export default function TradeForm({ open, mode = 'create', trade, pairIndex, tag
               </div>
             )}
           </div>
+          )}
         </div>
       </div>
 

@@ -142,6 +142,16 @@ memakai satu satuan; mode USD hanya cara memasukkannya — angka dolar dibagi ha
 Karena itu mode USD butuh Entry Price terisi lebih dulu. Nilai ekuivalen selalu tampil di
 bawah input.
 
+**Tutup sebagian posisi (scale out)**
+Menutup 80% posisi bukan "menutup trade". Panel trade berjalan punya tiga mode —
+`Edit rencana` · `◗ Sebagian` · `Penuh` — dan mode Sebagian hanya meminta tiga hal: berapa
+persen, di harga berapa, fee berapa. Sisanya dihitung: lot yang keluar, R yang terkunci, lot
+yang masih berjalan. Persen dihitung dari **sisa** posisi (tombol `Lot` menukar field ke satuan
+lot bila broker melaporkan begitu), dan SL untuk sisa posisi bisa langsung digeser ke BE.
+Trade tetap satu baris di jurnal; yang bertambah adalah daftar exit-nya. Tombol simpan
+menyebut angkanya sendiri — "Tutup 80% & simpan" — supaya tidak ada penutupan penuh yang tidak
+disengaja.
+
 ## Halaman
 
 - **Dashboard** — baris metrik (Net PnL, Win Rate, Total Trades, R:R Aktual), equity curve
@@ -162,9 +172,15 @@ Satu trade dicatat dua kali: saat dibuka (rencana) dan saat ditutup (hasil).
    berikut risikonya dalam dolar. Isi "harga terakhir" bila ingin melihat R floating.
 2. **Di Dashboard** — posisi berjalan tampil di baris terpisah di atas histori. Angkanya
    **tidak** masuk Net PnL maupun Win Rate sampai trade ditutup.
-3. **Tutup** — tombol "Tutup trade" membuka panel yang sama dalam mode hasil. R aktual dan
-   deviasi terhadap rencana dihitung otomatis, dengan label kata seperti "sesuai rencana" atau
-   "exit terlalu cepat". Setiap perubahan menambah entri riwayat, jadi jurnal tetap jujur.
+3. **Tutup sebagian** *(opsional, berkali-kali)* — tombol "◗ Sebagian" mengeluarkan sebagian
+   posisi. Trade tetap berstatus berjalan dengan penanda "Sebagian ditutup": bar dua warna
+   menunjukkan berapa yang sudah keluar dan berapa yang masih di pasar, tiap exit jadi satu
+   baris dengan waktu, porsi, harga, fee dan R-nya sendiri, dan risiko tersisa ditampilkan
+   dalam dolar — setelah SL digeser ke BE angkanya nol.
+4. **Tutup** — tombol "Tutup trade" (atau "Tutup sisa 20%") membuka panel yang sama dalam mode
+   hasil. R aktual dan deviasi terhadap rencana dihitung otomatis, dengan label kata seperti
+   "sesuai rencana" atau "exit terlalu cepat". Setiap perubahan menambah entri riwayat, jadi
+   jurnal tetap jujur.
 
 ## Pintasan papan ketik
 
@@ -179,8 +195,18 @@ Satu trade dicatat dua kali: saat dibuka (rencana) dan saat ditutup (hasil).
 ## Catatan perhitungan
 
 - PnL kotor = `(exit − entry) × size`, dibalik tandanya untuk Short. Bersih = kotor − fees.
-- Risiko = `|entry − SL| × size`. **R rencana** = `|TP − entry| / |entry − SL|`;
-  **R aktual** = `PnL bersih / risiko`. Tanpa SL, R tidak dihitung — PnL tetap tercatat.
+- Risiko = `|entry − SL| × size` memakai **size awal** dan **SL awal** — dasar R tidak berubah
+  walau sebagian posisi sudah ditutup atau SL digeser. **R rencana** =
+  `|TP − entry| / |entry − SL|`; **R aktual** = `PnL bersih / risiko`. Tanpa SL, R tidak
+  dihitung — PnL tetap tercatat.
+- **Scale out** — PnL tiap exit dihitung sendiri (`(harga − entry) × lot exit − fee exit`) lalu
+  dijumlahkan. Karena penyebutnya risiko awal, **R aktual otomatis menjadi rata-rata
+  tertimbang** semua exit, bukan R dari harga exit terakhir — scale-out tidak membuat angkanya
+  terlihat lebih buruk dari kenyataannya. Trade dengan beberapa exit tetap dihitung **satu
+  trade** dan satu kemenangan di Win Rate; jumlah exit jadi kolom tersendiri yang bisa diurutkan
+  di histori, supaya kebiasaan scale-out bisa dievaluasi terpisah.
+- Selama sebagian posisi masih berjalan, PnL yang sudah terkunci **belum** masuk Net PnL maupun
+  Win Rate. Yang tampil adalah "terkunci" (sudah realized) dan "floating" (sisa posisi).
 - Win rate memakai total trade selesai sebagai penyebut, termasuk break-even.
 - Expectancy = rata-rata R per trade. Angka paling jujur menilai strategi karena tidak
   bergantung pada ukuran akun.
@@ -200,11 +226,13 @@ src/
   lib/
     storage.js               jembatan ke server (fetch /api/…)
     calc.js                  semua perhitungan — fungsi murni
-    calc.test.mjs            25 pengujian
+    calc.test.mjs            34 pengujian
     pairs.js                 katalog pair + deteksi unit dasar
     format.js                pemformat angka & tanggal (id-ID)
   components/
-    TradeForm.jsx            panel entri 520px
+    TradeForm.jsx            panel entri 520px · mode edit / sebagian / penuh
+    PartialClose.jsx         form tutup sebagian (porsi %, exit, fee, SL sisa)
+    ExitList.jsx             bar dua warna + daftar exit + sisa posisi
     ScreenshotSlots.jsx      paste / drop / pilih file
     PairAutocomplete.jsx     autocomplete pair
     PositionSizeInput.jsx    toggle USD ↔ unit

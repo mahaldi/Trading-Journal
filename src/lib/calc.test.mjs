@@ -3,7 +3,7 @@
  * Tanpa framework — cukup assert bawaan Node.
  */
 import assert from 'node:assert/strict'
-import { deriveTrade, summarize, equityCurve, groupPerformance, rDistribution } from './calc.js'
+import { deriveTrade, summarize, equityCurve, groupPerformance, rDistribution, applyPartialExit, exitLegs } from './calc.js'
 import { splitPair, baseUnitShort, searchPairs, buildPairIndex } from './pairs.js'
 
 let passed = 0
@@ -191,5 +191,96 @@ test('konversi USD → unit memakai harga entry', () => {
   const size = usd / entry
   close(deriveTrade({ ...base, entry, exit: entry, size, fees: 0 }).notional, usd, 1e-9)
 })
+
+
+/* ══════════════════════════════════════════════════════════════
+   Tutup sebagian posisi (B5)
+   ══════════════════════════════════════════════════════════════ */
+
+console.log('\ntutup sebagian')
+
+const open80 = () => {
+  const t = {
+    ...base, status: 'open', closeDate: null, exit: null,
+    entry: 64210, size: 0.25, fees: 0, sl: 63600, tp: 65900, markPrice: 65600,
+  }
+  return applyPartialExit(t, { size: 0.2, price: 65480, fees: 6.5, note: 'TP1', slAfter: 64210 },
+    { now: '2026-08-12T14:20:00.000Z' })
+}
+
+test('trade lama tanpa exits tetap satu leg utuh', () => {
+  const t = { ...base, entry: 64210, exit: 65480, size: 0.25, fees: 8.2, sl: 63600 }
+  const legs = exitLegs(t)
+  assert.equal(legs.length, 1)
+  close(legs[0].size, 0.25)
+  close(deriveTrade(t).netPnl, 309.3)   // identik dengan versi tanpa fitur ini
+})
+
+test('menutup 80%: R terkunci, sisa posisi tetap berjalan', () => {
+  const d = deriveTrade(open80())
+  assert.equal(open80().status, 'open')
+  close(d.closedSize, 0.2)
+  close(d.remainingSize, 0.05, 1e-9)
+  close(d.closedPortion, 0.8, 1e-9)
+  close(d.realizedPnl, 247.5)           // (65480 − 64210) × 0.20 − 6.50
+  close(d.realizedR, 247.5 / 152.5)     // risiko awal tetap dasar R
+  assert.equal(d.netPnl, null)          // belum masuk Net PnL sampai selesai
+  assert.equal(d.isPartial, true)
+})
+
+test('floating hanya menghitung sisa posisi', () => {
+  const d = deriveTrade(open80())
+  close(d.floatingPnl, (65600 - 64210) * 0.05)
+  close(d.floatingR, ((65600 - 64210) * 0.05) / 152.5)
+})
+
+test('SL sisa digeser ke BE membuat risiko tersisa nol', () => {
+  const d = deriveTrade(open80())
+  close(d.remainingRisk, 0)
+})
+
+test('menutup sisa: R aktual adalah rata-rata tertimbang, bukan exit terakhir', () => {
+  const t = applyPartialExit(open80(), { size: 0.05, price: 65900, fees: 2.7 },
+    { now: '2026-08-12T16:40:00.000Z' })
+  const d = deriveTrade(t)
+  assert.equal(t.status, 'closed')
+  assert.equal(d.exitCount, 2)
+  close(d.netPnl, 247.5 + (65900 - 64210) * 0.05 - 2.7)   // 329.30
+  close(d.avgExit, (65480 * 0.2 + 65900 * 0.05) / 0.25)   // 65564
+  close(d.totalFees, 9.2)
+  close(d.actualR, 329.3 / 152.5)
+  assert.equal(d.outcome, 'win')
+})
+
+test('scale-out tetap dihitung satu trade di statistik', () => {
+  const t = applyPartialExit(open80(), { size: 0.05, price: 65900, fees: 2.7 })
+  const s = summarize([t])
+  assert.equal(s.total, 1)
+  assert.equal(s.wins, 1)
+  close(s.netPnl, 329.3)
+})
+
+test('exit sebagian tidak bisa melebihi sisa posisi', () => {
+  const t = applyPartialExit(open80(), { size: 99, price: 66000, fees: 0 })
+  assert.equal(t.status, 'closed')
+  close(deriveTrade(t).closedSize, 0.25)
+})
+
+test('short: scale-out membalik tanda dengan benar', () => {
+  let t = { ...base, status: 'open', closeDate: null, exit: null,
+    direction: 'short', entry: 100, size: 10, fees: 0, sl: 105, tp: 85 }
+  t = applyPartialExit(t, { size: 6, price: 94, fees: 1 })
+  close(deriveTrade(t).realizedPnl, 35)      // (94 − 100) × 6 × −1 − 1
+  t = applyPartialExit(t, { size: 4, price: 90, fees: 1 })
+  close(deriveTrade(t).netPnl, 35 + 39)      // (90 − 100) × 4 × −1 − 1
+  close(deriveTrade(t).actualR, 74 / 50)
+})
+
+test('pnlOverride tetap menang atas hasil scale-out', () => {
+  let t = applyPartialExit(open80(), { size: 0.05, price: 65900, fees: 2.7 })
+  t = { ...t, pnlOverride: 100 }
+  close(deriveTrade(t).netPnl, 100)
+})
+
 
 console.log(`\n${passed} pengujian lolos.\n`)

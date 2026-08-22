@@ -11,7 +11,7 @@ import {
 } from './lib/storage'
 import { normalize as normalizeShots, allShots } from './components/ScreenshotSlots'
 import { buildPairIndex } from './lib/pairs'
-import { allTags, effectiveDate, tagLibrary } from './lib/calc'
+import { allTags, applyPartialExit, effectiveDate, tagLibrary } from './lib/calc'
 import { buildTagStats } from './lib/tags'
 import { fileSize } from './lib/format'
 
@@ -138,6 +138,7 @@ export default function App() {
   const openCreate = useCallback(() => setForm({ open: true, mode: 'create', trade: null }), [])
   const openEdit = useCallback((t) => setForm({ open: true, mode: 'edit', trade: t }), [])
   const openClose = useCallback((t) => setForm({ open: true, mode: 'close', trade: t }), [])
+  const openPartial = useCallback((t) => setForm({ open: true, mode: 'partial', trade: t }), [])
 
   function handleSave(trade, isNew) {
     const wasClosing = form.mode === 'close'
@@ -154,6 +155,17 @@ export default function App() {
       setNewTradeId(trade.id)
       setTimeout(() => setNewTradeId(null), 1600)
     }
+    setTimeout(refreshStatus, 600)
+  }
+
+  /** Satu exit sebagian: trade tetap satu baris, daftar exit-nya yang bertambah. */
+  function handlePartialExit(trade, leg) {
+    const next = applyPartialExit(trade, leg)
+    setTrades((prev) => prev.map((t) => (t.id === next.id ? next : t)))
+    setForm({ open: false, mode: 'create', trade: null })
+    setPage('dashboard')
+    setNewTradeId(next.id)
+    setTimeout(() => setNewTradeId(null), 1600)
     setTimeout(refreshStatus, 600)
   }
 
@@ -242,6 +254,7 @@ export default function App() {
             onNew={openCreate}
             onEdit={openEdit}
             onCloseTrade={openClose}
+            onPartialClose={openPartial}
             onDelete={(t) => setConfirmDelete(t)}
             onLightbox={setLightbox}
             newTradeId={newTradeId}
@@ -262,6 +275,7 @@ export default function App() {
         tagSuggestions={tagSuggestions}
         tagStats={tagStats}
         onSave={handleSave}
+        onPartialExit={handlePartialExit}
         onClose={() => setForm({ open: false, mode: 'create', trade: null })}
         onLightbox={setLightbox}
       />
