@@ -3,10 +3,11 @@ import Dashboard from './pages/Dashboard'
 import Calendar from './pages/Calendar'
 import Stats from './pages/Stats'
 import Tags from './pages/Tags'
+import Notes from './pages/Notes'
 import TradeForm from './components/TradeForm'
 import { Segmented, Lightbox, Confirm } from './components/ui'
 import {
-  loadTrades, saveTrades, loadSettings, saveSettings,
+  loadTrades, saveTrades, loadSettings, saveSettings, loadNotes, saveNotes,
   deleteImage, pruneImages, getStatus,
 } from './lib/storage'
 import { normalize as normalizeShots, allShots } from './components/ScreenshotSlots'
@@ -14,11 +15,13 @@ import { buildPairIndex } from './lib/pairs'
 import { allTags, applyPartialExit, effectiveDate, tagLibrary } from './lib/calc'
 import { buildTagStats } from './lib/tags'
 import { fileSize } from './lib/format'
+import { NOTE_TYPES, blankNote, imageBlocks, notesByTrade, notesByDate } from './lib/notes'
 
 const PAGES = [
   { key: 'dashboard', label: 'Dashboard' },
   { key: 'calendar', label: 'Kalender' },
   { key: 'stats', label: 'Statistik' },
+  { key: 'notes', label: 'Catatan' },
   { key: 'tags', label: 'Tag' },
 ]
 
@@ -44,6 +47,14 @@ export default function App() {
   const [newTradeId, setNewTradeId] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
 
+  const [notes, setNotes] = useState([])
+  const [notesSave, setNotesSave] = useState('idle')
+  const [activeNoteId, setActiveNoteId] = useState(null)
+  const [newNoteId, setNewNoteId] = useState(null)
+  const [noteMenu, setNoteMenu] = useState(false)
+  const [confirmNoteDelete, setConfirmNoteDelete] = useState(null)
+  const notesTimer = useRef(null)
+
   // Jangan menulis balik ke disk sebelum pembacaan awal selesai —
   // kalau tidak, file bisa tertimpa array kosong saat app baru dibuka.
   const hydrated = useRef(false)
@@ -54,7 +65,8 @@ export default function App() {
     let cancelled = false
     ;(async () => {
       try {
-        const [t, s] = await Promise.all([loadTrades(), loadSettings()])
+        // notes.json belum ada di jurnal lama → mulai dari daftar kosong.
+        const [t, s, n] = await Promise.all([loadTrades(), loadSettings(), loadNotes().catch(() => [])])
         if (cancelled) return
         // Trade lama menyimpan satu gambar per slot; versi ini memakai array.
         // Migrasi dilakukan saat baca, jadi gambar lama tetap tampil.
@@ -62,6 +74,7 @@ export default function App() {
           (Array.isArray(t) ? t : []).map((tr) => ({ ...tr, shots: normalizeShots(tr.shots) }))
         )
         setSettings({ startingBalance: 10000, ...(s || {}) })
+        setNotes(Array.isArray(n) ? n : [])
         setBoot({ loading: false, error: null })
         hydrated.current = true
         pruneImages().then(refreshStatus)
@@ -94,6 +107,24 @@ export default function App() {
     return () => clearTimeout(saveTimer.current)
   }, [trades])
 
+  /* ── tulis notes.json setiap ada perubahan (ditunda sesaat — mengetik tidak menulis per huruf) ── */
+  useEffect(() => {
+    if (!hydrated.current) return
+    setNotesSave('saving')
+    clearTimeout(notesTimer.current)
+    notesTimer.current = setTimeout(async () => {
+      try {
+        await saveNotes(notes)
+        setNotesSave('saved')
+        setTimeout(() => setNotesSave((s) => (s === 'saved' ? 'idle' : s)), 1800)
+      } catch (err) {
+        console.error(err)
+        setNotesSave('error')
+      }
+    }, 500)
+    return () => clearTimeout(notesTimer.current)
+  }, [notes])
+
   useEffect(() => {
     if (!hydrated.current) return
     saveSettings(settings).catch((err) => console.error('[settings]', err.message))
@@ -102,7 +133,7 @@ export default function App() {
   /* ── pintasan: N membuka panel entri ── */
   useEffect(() => {
     function onKey(e) {
-      if (form.open || confirmDelete || showSettings) return
+      if (form.open || confirmDelete || showSettings || confirmNoteDelete) return
       const tag = document.activeElement?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
       if (e.key === 'n' || e.key === 'N') {
@@ -112,7 +143,7 @@ export default function App() {
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [form.open, confirmDelete, showSettings])
+  }, [form.open, confirmDelete, showSettings, confirmNoteDelete])
 
   const pairIndex = useMemo(() => buildPairIndex(trades), [trades])
   const tagSuggestions = useMemo(() => allTags(trades), [trades])
@@ -178,6 +209,42 @@ export default function App() {
     setTimeout(refreshStatus, 600)
   }
 
+  /* ─────────────────────────── aksi catatan ─────────────────────────── */
+
+  const tradeNotes = useMemo(() => notesByTrade(notes), [notes])
+  const dateNotes = useMemo(() => notesByDate(notes), [notes])
+
+  function createNote(type = 'free') {
+    const note = blankNote(type, { trades })
+    setNotes((prev) => [note, ...prev])
+    setActiveNoteId(note.id)
+    setNewNoteId(note.id)
+    setTimeout(() => setNewNoteId((id) => (id === note.id ? null : id)), 1500)
+    setNoteMenu(false)
+    setPage('notes')
+  }
+
+  const patchNote = useCallback((id, fn) => {
+    setNotes((prev) => prev.map((n) => {
+      if (n.id !== id) return n
+      const next = fn(n)
+      return next === n ? n : { ...next, updatedAt: new Date().toISOString() }
+    }))
+  }, [])
+
+  const openNote = useCallback((id) => {
+    setActiveNoteId(id)
+    setPage('notes')
+  }, [])
+
+  function handleDeleteNote(note) {
+    for (const b of imageBlocks(note)) if (b.image?.id) deleteImage(b.image.id)
+    setNotes((prev) => prev.filter((n) => n.id !== note.id))
+    setActiveNoteId(null)
+    setConfirmNoteDelete(null)
+    setTimeout(refreshStatus, 600)
+  }
+
   /* ─────────────────────────── aksi tag ─────────────────────────── */
 
   const renameTag = (from, to) =>
@@ -227,11 +294,13 @@ export default function App() {
             {p.label}
           </button>
         ))}
-        {page !== 'calendar' && (
+        {page !== 'calendar' && page !== 'notes' && (
           <Segmented options={RANGES} value={range} onChange={setRange} small style={{ marginLeft: 'var(--space-4)' }} />
         )}
 
-        <SaveIndicator state={saveState} />
+        {page === 'notes'
+          ? <SaveIndicator state={notesSave} file="notes.json" />
+          : <SaveIndicator state={saveState} />}
 
         <button
           className="btn btn-secondary btn-sm"
@@ -240,12 +309,34 @@ export default function App() {
         >
           ⚙
         </button>
-        <button className="btn btn-primary" onClick={openCreate}>
-          + Trade Baru <span className="kbd">N</span>
-        </button>
+        {page === 'notes' ? (
+          <span className="btn-split">
+            <button className="btn btn-primary" onClick={() => createNote('free')}>+ Catatan</button>
+            <button className="btn btn-primary" onClick={() => setNoteMenu((v) => !v)} title="Pilih template" aria-label="Pilih template">▾</button>
+            {noteMenu && (
+              <>
+                <div style={{ position: 'fixed', inset: 0, zIndex: 49 }} onMouseDown={() => setNoteMenu(false)} />
+                <div className="popover" style={{ right: 0, width: 260, top: 'calc(100% + 6px)' }}>
+                  <div className="mm-section">Mulai dari template</div>
+                  {NOTE_TYPES.map((t) => (
+                    <button key={t.key} className="menu-item" onClick={() => createNote(t.key)}>
+                      <span className="note-dot" style={{ width: 6, height: 6, background: t.color }} />
+                      <span style={{ flex: 1 }}>{t.full}</span>
+                      <span className="mono" style={{ fontSize: 10, color: 'var(--color-neutral-600)' }}>{t.outline.length > 1 ? `${t.outline.length} bagian` : 'kosong'}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </span>
+        ) : (
+          <button className="btn btn-primary" onClick={openCreate}>
+            + Trade Baru <span className="kbd">N</span>
+          </button>
+        )}
       </div>
 
-      <div className="page">
+      <div className={'page' + (page === 'notes' ? ' page-notes' : '')}>
         {page === 'dashboard' && (
           <Dashboard
             trades={ranged}
@@ -258,9 +349,28 @@ export default function App() {
             onDelete={(t) => setConfirmDelete(t)}
             onLightbox={setLightbox}
             newTradeId={newTradeId}
+            notesByTrade={tradeNotes}
+            onOpenNote={openNote}
           />
         )}
-        {page === 'calendar' && <Calendar trades={trades} onPickTrade={openEdit} />}
+        {page === 'calendar' && (
+          <Calendar trades={trades} onPickTrade={openEdit} notesByDate={dateNotes} onOpenNote={openNote} />
+        )}
+        {page === 'notes' && (
+          <Notes
+            notes={notes}
+            trades={trades}
+            activeId={activeNoteId}
+            newNoteId={newNoteId}
+            saveState={notesSave}
+            onSelect={setActiveNoteId}
+            onCreate={createNote}
+            onPatch={patchNote}
+            onDelete={(n) => setConfirmNoteDelete(n)}
+            onOpenTrade={openEdit}
+            onLightbox={setLightbox}
+          />
+        )}
         {page === 'stats' && <Stats trades={ranged} />}
         {page === 'tags' && (
           <Tags trades={ranged} onRenameTag={renameTag} onMergeTag={mergeTag} onDeleteTag={deleteTag} />
@@ -292,6 +402,20 @@ export default function App() {
         onCancel={() => setConfirmDelete(null)}
       />
 
+      <Confirm
+        open={!!confirmNoteDelete}
+        title="Hapus catatan ini?"
+        body={`${confirmNoteDelete?.title || 'Tanpa judul'} — dihapus dari data/notes.json${
+          confirmNoteDelete && imageBlocks(confirmNoteDelete).length
+            ? `, beserta ${imageBlocks(confirmNoteDelete).length} gambarnya di data/images/`
+            : ''
+        }. Trade yang tertaut tidak ikut terhapus.`}
+        confirmLabel="Hapus"
+        danger
+        onConfirm={() => handleDeleteNote(confirmNoteDelete)}
+        onCancel={() => setConfirmNoteDelete(null)}
+      />
+
       {showSettings && (
         <div className="dialog-backdrop" onClick={() => setShowSettings(false)}>
           <div className="dialog" style={{ width: 'min(560px, 100%)' }} onClick={(e) => e.stopPropagation()}>
@@ -316,6 +440,9 @@ export default function App() {
             {status ? (
               <div className="inset-box" style={{ padding: 'var(--space-3) var(--space-4)', display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <FileRow label="Trade" value={status.tradesFile} meta={`${status.tradeCount} trade`} />
+                {status.notesFile && (
+                  <FileRow label="Catatan" value={status.notesFile} meta={`${status.noteCount} catatan`} />
+                )}
                 <FileRow label="Gambar" value={status.imagesDir + '/'} meta={`${status.imageCount} file · ${fileSize(status.imageBytes)}`} />
               </div>
             ) : (
@@ -349,11 +476,11 @@ function FileRow({ label, value, meta }) {
 }
 
 /** Umpan balik kecil bahwa perubahan sudah benar-benar ditulis ke disk. */
-function SaveIndicator({ state }) {
+function SaveIndicator({ state, file = 'trades.json' }) {
   if (state === 'idle') return <span style={{ marginLeft: 'auto' }} />
   const map = {
     saving: { text: 'menyimpan…', color: 'var(--color-neutral-600)' },
-    saved: { text: '✓ tersimpan ke trades.json', color: 'var(--color-profit)' },
+    saved: { text: `✓ tersimpan ke ${file}`, color: 'var(--color-profit)' },
     error: { text: '⚠ gagal menyimpan — server mati?', color: 'var(--color-loss)' },
   }
   const s = map[state]

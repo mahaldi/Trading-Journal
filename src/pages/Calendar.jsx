@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react'
 import { Segmented } from '../components/ui'
 import { dailyTotals, deriveTrade } from '../lib/calc'
+import { typeOf } from '../lib/notes'
 import { money, moneyCompact, rVal, monthLabel, longDate, shortDate, toneClass, DAYS_ID, todayISO } from '../lib/format'
 
 /**
  * Heatmap PnL harian. Intensitas tint = besaran PnL, bukan jumlah trade.
  * Hari tanpa trade tetap terlihat sebagai sel kosong — istirahat juga informasi.
  */
-export default function Calendar({ trades, onPickTrade }) {
+export default function Calendar({ trades, onPickTrade, notesByDate, onOpenNote }) {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth())
@@ -55,6 +56,7 @@ export default function Calendar({ trades, onPickTrade }) {
 
   const today = todayISO()
   const selectedData = selected ? totals.get(selected) : null
+  const selectedNotes = (selected && notesByDate?.get(selected)) || []
 
   return (
     <div className="card elev-sm" style={{ padding: 'var(--space-6)' }}>
@@ -85,6 +87,8 @@ export default function Calendar({ trades, onPickTrade }) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 'var(--space-2)' }}>
             {cells.map((c, i) => {
               if (!c) return <div key={i} />
+              const dayNotes = notesByDate?.get(c.iso) || []
+              const clickable = c.data || dayNotes.length > 0
               const v = c.data ? (unit === 'R' ? c.data.r : c.data.pnl) : null
               const intensity = v != null && monthStats.scale ? Math.min(0.5, (Math.abs(v) / monthStats.scale) * 0.5) : 0
               const tone = v == null ? null : v > 0 ? 'profit' : v < 0 ? 'loss' : null
@@ -98,13 +102,14 @@ export default function Calendar({ trades, onPickTrade }) {
                 <div
                   key={c.iso}
                   className={
-                    'cal-cell' + (c.data ? '' : ' is-empty') + (c.iso === today ? ' is-today' : '') +
+                    'cal-cell' + (clickable ? '' : ' is-empty') + (c.iso === today ? ' is-today' : '') +
                     (c.iso === selected ? ' is-today' : '')
                   }
                   style={style}
-                  onClick={() => c.data && setSelected(c.iso === selected ? null : c.iso)}
-                  title={c.data ? `${longDate(c.iso)} · ${c.data.count} trade` : longDate(c.iso)}
+                  onClick={() => clickable && setSelected(c.iso === selected ? null : c.iso)}
+                  title={[longDate(c.iso), c.data && `${c.data.count} trade`, dayNotes.length && `${dayNotes.length} catatan`].filter(Boolean).join(' · ')}
                 >
+                  {dayNotes.length > 0 && <span className="cal-note-dot" />}
                   <div className="mono" style={{ fontSize: 10, color: c.data ? 'var(--color-neutral-500)' : 'var(--color-neutral-700)' }}>
                     {c.day}
                   </div>
@@ -140,11 +145,11 @@ export default function Calendar({ trades, onPickTrade }) {
           <Row label="Overtrading" value={<span className="mono">{monthStats.over} hari &gt; 4 trade</span>} />
           <div className="divider" />
 
-          {selectedData ? (
+          {selected && (selectedData || selectedNotes.length > 0) ? (
             <>
               <div className="section-step" style={{ marginBottom: 0 }}>{longDate(selected)}</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-                {selectedData.trades.map((t) => {
+                {(selectedData?.trades || []).map((t) => {
                   const d = deriveTrade(t)
                   return (
                     <div
@@ -162,10 +167,33 @@ export default function Calendar({ trades, onPickTrade }) {
                   )
                 })}
               </div>
+              {selectedNotes.length > 0 && (
+                <>
+                  <div className="metric-label" style={{ marginTop: 'var(--space-2)' }}>Catatan · {selectedNotes.length}</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                    {selectedNotes.map((n) => (
+                      <div
+                        key={n.id}
+                        onClick={() => onOpenNote?.(n.id)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          padding: '6px 8px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                          background: 'var(--color-bg)', fontSize: 12,
+                        }}
+                      >
+                        <span className="note-dot" style={{ background: typeOf(n.type).color }} />
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.title || 'Tanpa judul'}</span>
+                        <span className="note-kind">{typeOf(n.type).label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </>
           ) : (
             <p className="card-body" style={{ lineHeight: 1.6, margin: 0 }}>
-              Klik satu sel untuk melihat daftar trade pada tanggal itu. Sel hari ini diberi ring aksen.
+              Klik satu sel untuk melihat daftar trade pada tanggal itu. Sel hari ini diberi ring aksen;
+              titik aksen kecil di pojok menandai hari yang punya catatan.
             </p>
           )}
         </div>

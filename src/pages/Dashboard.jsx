@@ -10,6 +10,7 @@ import {
 } from '../lib/calc'
 import { money, moneyCompact, rVal, pct, price, size as fmtSize, shortDate, stamp, toneClass } from '../lib/format'
 import { baseUnitShort } from '../lib/pairs'
+import { typeOf } from '../lib/notes'
 
 const FILTERS = [
   { value: 'all', label: 'Semua' },
@@ -20,7 +21,7 @@ const FILTERS = [
   { value: 'scaled', label: 'Scale-out', title: 'Trade dengan lebih dari satu exit' },
 ]
 
-export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, onCloseTrade, onPartialClose, onDelete, onLightbox, newTradeId }) {
+export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, onCloseTrade, onPartialClose, onDelete, onLightbox, newTradeId, notesByTrade, onOpenNote }) {
   const [curveUnit, setCurveUnit] = useState('$')
   const [filter, setFilter] = useState('all')
   const [openRow, setOpenRow] = useState(null)
@@ -319,7 +320,7 @@ export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, 
                     {isOpen && (
                       <tr>
                         <td colSpan={9} style={{ padding: 0 }}>
-                          <TradeDetail trade={t} d={d} onEdit={onEdit} onDelete={onDelete} onLightbox={onLightbox} />
+                          <TradeDetail trade={t} d={d} onEdit={onEdit} onDelete={onDelete} onLightbox={onLightbox} notes={notesByTrade?.get(t.id)} onOpenNote={onOpenNote} />
                         </td>
                       </tr>
                     )}
@@ -344,7 +345,7 @@ function Stat({ label, value }) {
 }
 
 /** Panel ekspansi inline: niat · bukti · hasil, berdampingan. */
-function TradeDetail({ trade: t, d, onEdit, onDelete, onLightbox }) {
+function TradeDetail({ trade: t, d, onEdit, onDelete, onLightbox, notes, onOpenNote }) {
   const dev = deviationLabel(d.deviationR, { scaled: d.exitCount > 1 })
   const shots = normalizeShots(t.shots)
   const scaled = d.exitCount > 1
@@ -403,6 +404,25 @@ function TradeDetail({ trade: t, d, onEdit, onDelete, onLightbox }) {
         </div>
       </div>
     </div>
+
+    {notes?.length > 0 && (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        <div className="section-step" style={{ marginBottom: 0 }}>Catatan tertaut · {notes.length}</div>
+        {notes.map((n) => (
+          <div
+            key={n.id}
+            className="linked-row"
+            style={{ background: 'var(--color-bg)' }}
+            onClick={(e) => { e.stopPropagation(); onOpenNote?.(n.id) }}
+          >
+            <span className="note-dot" style={{ background: typeOf(n.type).color }} />
+            <span style={{ fontSize: 13, flex: 1 }}>{n.title || 'Tanpa judul'}</span>
+            <span className="note-kind">{typeOf(n.type).label}</span>
+            <span className="mono" style={{ fontSize: 10, color: 'var(--color-neutral-600)', width: 44, textAlign: 'right' }}>{shortDate(n.date)}</span>
+          </div>
+        ))}
+      </div>
+    )}
 
     {scaled && (
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 'var(--space-6)' }}>

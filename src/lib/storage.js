@@ -3,6 +3,7 @@
    semua data adalah file nyata di folder ./data pada komputer ini:
 
      data/trades.json        seluruh trade
+     data/notes.json         catatan (tab Catatan)
      data/settings.json      pengaturan
      data/images/<id>.png    tiap screenshot
 
@@ -34,6 +35,20 @@ export function saveTrades(trades) {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(trades),
+  })
+}
+
+/* ─────────────────────────── notes ─────────────────────────── */
+
+export function loadNotes() {
+  return req('/api/notes')
+}
+
+export function saveNotes(notes) {
+  return req('/api/notes', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(notes),
   })
 }
 
