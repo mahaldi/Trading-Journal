@@ -241,3 +241,7 @@ src/
   pages/                     Dashboard · Calendar · Stats · Tags
   styles.css                 token & komponen Nocturne
 ```
+
+## Lisensi
+
+[MIT](LICENSE) — bebas dipakai, diubah, dan dibagikan selama pemberitahuan hak cipta tetap disertakan.
