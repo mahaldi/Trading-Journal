@@ -3,6 +3,15 @@
    ══════════════════════════════════════════════════════════════ */
 
 export const EMOTIONS = ['Confident', 'Calm', 'FOMO', 'Revenge', 'Hesitant', 'Bored']
+
+/**
+ * Siklus hidup trade: Open order → Berjalan → Selesai.
+ *  - 'pending' : limit sudah dipasang, harga belum menyentuh (belum ada posisi)
+ *  - 'open'    : berjalan — posisi di pasar
+ *  - 'closed'  : selesai — hasil terisi
+ * Open order tidak punya partial fill: ia hanya bisa jadi 'open' atau dihapus.
+ */
+export const STATUS_LABEL = { pending: 'Open order', open: 'Berjalan', closed: 'Selesai' }
 export const TIMEFRAMES = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1']
 
 const num = (v) => {
@@ -13,6 +22,65 @@ const num = (v) => {
 
 export const dirMul = (direction) => (direction === 'short' ? -1 : 1)
 
+const EPS = 1e-9
+
+/**
+ * Semua exit dari satu trade sebagai daftar tunggal — termasuk exit terakhir
+ * yang masih disimpan di field lama `exit`/`fees`.
+ *
+ * Trade lama (tanpa `exits`) menghasilkan tepat satu leg berisi seluruh size,
+ * jadi setiap perhitungan di bawah ini identik dengan versi sebelumnya.
+ */
+export function exitLegs(t) {
+  const size = num(t.size)
+  const legs = []
+
+  for (const e of t.exits || []) {
+    const price = num(e.price)
+    const legSize = num(e.size)
+    if (price == null || legSize == null || legSize <= 0) continue
+    legs.push({
+      id: e.id,
+      ts: e.ts || null,
+      date: e.date || (e.ts || '').slice(0, 10) || null,
+      size: legSize,
+      price,
+      fees: num(e.fees) || 0,
+      note: e.note || '',
+      kind: 'partial',
+    })
+  }
+
+  const partialSize = legs.reduce((s, l) => s + l.size, 0)
+  const finalPrice = num(t.exit)
+  if (t.status === 'closed' && finalPrice != null) {
+    // Sisa posisi ditutup pada harga `exit`. Untuk trade tanpa partial,
+    // sisa = seluruh size, persis seperti dulu.
+    const rest = size != null ? size - partialSize : null
+    const legSize = rest != null ? rest : null
+    if (legSize != null && legSize > EPS) {
+      legs.push({
+        id: 'final',
+        ts: t.updatedAt || null,
+        date: t.closeDate || t.date || null,
+        size: legSize,
+        price: finalPrice,
+        fees: num(t.fees) || 0,
+        note: '',
+        kind: 'final',
+      })
+    }
+  }
+
+  return legs
+}
+
+/** PnL kotor satu leg, sudah dikurangi fee leg itu sendiri. */
+export function legPnl(leg, entry, mul) {
+  if (entry == null) return null
+  return (leg.price - entry) * leg.size * mul - leg.fees
+}
+
 /**
  * Turunkan semua angka dari satu trade.
  * Mengembalikan objek dengan nilai null bila datanya belum cukup.
@@ -21,6 +89,7 @@ export function deriveTrade(t) {
   const entry = num(t.entry)
   const exit = num(t.exit)
   const sl = num(t.sl)
+  const slAfter = num(t.slAfter) ?? sl
   const tp = num(t.tp)
   const size = num(t.size)
   const fees = num(t.fees) || 0
@@ -39,33 +108,72 @@ export function deriveTrade(t) {
       : null
 
   const closed = t.status === 'closed'
+  // Open order belum punya posisi: rencana tetap dihitung, tapi tidak ada
+  // floating, exit, maupun risiko yang sedang terpakai di akun.
+  const pending = t.status === 'pending'
+
+  /* ── exit bertahap ── */
+  const legs = exitLegs(t)
+  const exitCount = legs.length
+  const closedSize = legs.reduce((s, l) => s + l.size, 0)
+  const remainingSize = size != null ? Math.max(0, size - closedSize) : null
+  const closedPortion = size ? Math.min(1, closedSize / size) : null
+  const remainingPortion = closedPortion != null ? 1 - closedPortion : null
+  const isPartial = !closed && closedSize > EPS && (remainingSize ?? 0) > EPS
+  const totalFees = legs.reduce((s, l) => s + l.fees, 0)
+
+  // Rata-rata exit tertimbang — bukan harga exit terakhir.
+  const avgExit = closedSize > EPS
+    ? legs.reduce((s, l) => s + l.price * l.size, 0) / closedSize
+    : null
+
+  // PnL yang sudah benar-benar terkunci, walau trade masih berjalan.
+  let realizedPnl = null
+  if (entry != null && legs.length) {
+    realizedPnl = legs.reduce((s, l) => s + legPnl(l, entry, mul), 0)
+  }
+  const realizedR = realizedPnl != null && riskAmount ? realizedPnl / riskAmount : null
+
+  // grossPnl dipertahankan untuk trade satu-exit (dipakai di UI & tes lama).
   let grossPnl = null
   if (closed && entry != null && exit != null && size != null) {
-    grossPnl = (exit - entry) * size * mul
+    grossPnl = legs.length
+      ? legs.reduce((s, l) => s + (l.price - entry) * l.size * mul, 0)
+      : (exit - entry) * size * mul
   }
 
   const override = num(t.pnlOverride)
   let netPnl = null
   if (override != null) netPnl = override
-  else if (grossPnl != null) netPnl = grossPnl - fees
+  else if (closed && realizedPnl != null) netPnl = realizedPnl
 
   const actualR = netPnl != null && riskAmount ? netPnl / riskAmount : null
 
-  // Floating untuk posisi yang masih berjalan (butuh harga terakhir manual)
+  // Floating hanya untuk sisa posisi yang masih di pasar.
   let floatingPnl = null
   let floatingR = null
-  if (!closed && mark != null && entry != null && size != null) {
-    floatingPnl = (mark - entry) * size * mul - fees
+  if (!closed && !pending && mark != null && entry != null && remainingSize != null && remainingSize > EPS) {
+    floatingPnl = (mark - entry) * remainingSize * mul - fees
     if (riskAmount) floatingR = floatingPnl / riskAmount
   }
+
+  // Risiko yang masih di meja: sisa size dikali jarak ke SL yang berlaku sekarang.
+  const remainingRisk =
+    !pending && entry != null && slAfter != null && remainingSize != null
+      ? Math.abs(entry - slAfter) * remainingSize
+      : null
 
   const deviationR = plannedR != null && actualR != null ? actualR - plannedR : null
 
   return {
-    entry, exit, sl, tp, size, fees, mark, mul,
+    entry, exit, sl, slAfter, tp, size, fees, mark, mul,
     notional, riskPerUnit, riskAmount, rewardAmount,
+    pending,
     plannedR, grossPnl, netPnl, actualR,
     floatingPnl, floatingR, deviationR,
+    legs, exitCount, closedSize, remainingSize,
+    closedPortion, remainingPortion, isPartial,
+    totalFees, avgExit, realizedPnl, realizedR, remainingRisk,
     outcome: outcomeOf(netPnl),
   }
 }
@@ -77,11 +185,18 @@ export function outcomeOf(netPnl) {
   return 'be'
 }
 
-/** Kata untuk deviasi eksekusi — jurnal merekam kualitas eksekusi, bukan hasil saja. */
-export function deviationLabel(d) {
+/**
+ * Kata untuk deviasi eksekusi — jurnal merekam kualitas eksekusi, bukan hasil saja.
+ * Untuk trade scale-out, R di bawah rencana biasanya konsekuensi wajar dari
+ * mengambil sebagian di TP1, jadi kata-katanya berbeda dari "SL kena".
+ */
+export function deviationLabel(d, { scaled = false } = {}) {
   if (d == null) return null
   if (Math.abs(d) <= 0.15) return { text: 'sesuai rencana', tone: 'flat' }
   if (d > 0) return { text: d > 0.5 ? 'exit lebih jauh dari rencana' : 'sedikit di atas rencana', tone: 'profit' }
+  if (scaled) {
+    return { text: d < -0.5 ? 'scale-out jauh di bawah target' : 'scale-out sedikit di bawah target', tone: 'loss' }
+  }
   return { text: d < -0.5 ? 'exit terlalu cepat / SL kena' : 'sedikit di bawah rencana', tone: 'loss' }
 }
 
@@ -91,7 +206,29 @@ export function effectiveDate(t) {
 }
 
 export const closedTrades = (trades) => trades.filter((t) => t.status === 'closed')
-export const openTrades = (trades) => trades.filter((t) => t.status !== 'closed')
+/** Posisi berjalan saja — open order yang belum terisi tidak termasuk. */
+export const openTrades = (trades) => trades.filter((t) => t.status !== 'closed' && t.status !== 'pending')
+/** Open order: limit terpasang, belum filled. */
+export const pendingTrades = (trades) => trades.filter((t) => t.status === 'pending')
+
+/** Tanggal lokal 'YYYY-MM-DD' dari sebuah timestamp ISO. */
+function localDay(iso) {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/**
+ * Kapan open order dipasang. Memakai waktu saat dicatat (`placedAt`), kecuali
+ * tanggal pasang diubah manual ke hari lain — maka dihitung dari awal hari itu.
+ */
+export function orderPlacedAt(t) {
+  const ts = t.placedAt || t.createdAt || null
+  const day = t.date || null
+  if (ts && (!day || localDay(ts) === day)) return ts
+  if (day) return new Date(`${day}T00:00:00`).toISOString()
+  return ts
+}
 
 /** Urut menaik berdasarkan tanggal efektif, lalu waktu pembuatan. */
 export function sortByDate(trades, dir = 1) {
@@ -270,4 +407,80 @@ export function allTags(trades) {
   const set = new Set()
   for (const t of trades) for (const tag of t.tags || []) set.add(tag)
   return [...set].sort((a, b) => a.localeCompare(b))
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Tutup sebagian posisi
+   ══════════════════════════════════════════════════════════════ */
+
+/** Trade yang sebagian posisinya sudah ditutup tapi belum selesai. */
+export const isPartiallyClosed = (t) => deriveTrade(t).isPartial
+
+export const partialTrades = (trades) => trades.filter(isPartiallyClosed)
+
+export function newExitId() {
+  return `x_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`
+}
+
+/**
+ * Tambahkan satu exit sebagian ke sebuah trade dan kembalikan trade baru.
+ * Murni — tidak menyentuh objek aslinya.
+ *
+ * `leg.size` adalah jumlah unit yang keluar (bukan persen). Bila sisa posisi
+ * habis, trade otomatis menjadi 'closed': leg terakhir dipindahkan ke field
+ * `exit`/`fees` supaya bentuk datanya sama dengan trade satu-exit.
+ */
+export function applyPartialExit(trade, leg, { now = new Date().toISOString() } = {}) {
+  const t = { ...trade }
+  const size = Number(t.size)
+  const prior = deriveTrade(t)
+  const legSize = Math.min(Number(leg.size), prior.remainingSize ?? Number(leg.size))
+  if (!Number.isFinite(legSize) || legSize <= 0) return trade
+
+  const entry = {
+    id: leg.id || newExitId(),
+    ts: leg.ts || now,
+    date: leg.date || (leg.ts || now).slice(0, 10),
+    size: legSize,
+    price: Number(leg.price),
+    fees: Number(leg.fees) || 0,
+    note: leg.note || '',
+  }
+
+  const exits = [...(t.exits || []), entry]
+  const closedSize = exits.reduce((s, e) => s + Number(e.size), 0)
+  const rest = size - closedSize
+  const portionPct = size ? Math.round((legSize / size) * 1000) / 10 : null
+  const history = [...(t.history || [])]
+
+  if (rest <= 1e-9) {
+    // Leg terakhir jadi exit penuh; sisanya tetap tercatat di daftar exit.
+    exits.pop()
+    history.push({ ts: now, label: exits.length ? `ditutup penuh · sisa ${portionPct}%` : 'ditutup' })
+    return {
+      ...t,
+      exits,
+      status: 'closed',
+      exit: entry.price,
+      fees: entry.fees,
+      closeDate: entry.date,
+      closeNotes: entry.note || t.closeNotes || '',
+      markPrice: null,
+      slAfter: leg.slAfter ?? t.slAfter ?? null,
+      updatedAt: now,
+      history,
+    }
+  }
+
+  history.push({ ts: now, label: `ditutup sebagian ${portionPct}% @ ${entry.price}` })
+  return {
+    ...t,
+    exits,
+    status: 'open',
+    exit: null,
+    closeDate: null,
+    slAfter: leg.slAfter ?? t.slAfter ?? null,
+    updatedAt: now,
+    history,
+  }
 }

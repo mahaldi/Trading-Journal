@@ -3,6 +3,7 @@
 
    Semua data hidup sebagai file biasa di folder ./data:
      data/trades.json        seluruh trade, JSON rapi (bisa dibuka & diedit)
+     data/notes.json         seluruh catatan (tab Catatan)
      data/images/<id>.png    tiap screenshot sebagai file gambar tersendiri
 
    Tidak ada database, tidak ada localStorage. Salin folder data/ =
@@ -23,6 +24,7 @@ const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : pat
 const IMAGES_DIR = path.join(DATA_DIR, 'images')
 const TRADES_FILE = path.join(DATA_DIR, 'trades.json')
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json')
+const NOTES_FILE = path.join(DATA_DIR, 'notes.json')
 const PORT = Number(process.env.PORT) || 5174
 
 const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif'])
@@ -82,6 +84,10 @@ async function ensureDirs() {
   if (!fsSync.existsSync(TRADES_FILE)) {
     await writeJSONAtomic(TRADES_FILE, [])
     console.log('  dibuat:', path.relative(ROOT, TRADES_FILE))
+  }
+  if (!fsSync.existsSync(NOTES_FILE)) {
+    await writeJSONAtomic(NOTES_FILE, [])
+    console.log('  dibuat:', path.relative(ROOT, NOTES_FILE))
   }
   if (!fsSync.existsSync(SETTINGS_FILE)) {
     await writeJSONAtomic(SETTINGS_FILE, { startingBalance: 10000 })
@@ -147,6 +153,26 @@ app.put('/api/trades', async (req, res) => {
     res.json({ ok: true, count: req.body.length, file: path.relative(ROOT, TRADES_FILE) })
   } catch (err) {
     console.error('[server] gagal menyimpan trades:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+/* ── notes ── */
+
+app.get('/api/notes', async (_req, res) => {
+  const notes = await readJSON(NOTES_FILE, [])
+  res.json(Array.isArray(notes) ? notes : [])
+})
+
+app.put('/api/notes', async (req, res) => {
+  if (!Array.isArray(req.body)) {
+    return res.status(400).json({ error: 'Body harus berupa array catatan' })
+  }
+  try {
+    await writeJSONAtomic(NOTES_FILE, req.body)
+    res.json({ ok: true, count: req.body.length, file: path.relative(ROOT, NOTES_FILE) })
+  } catch (err) {
+    console.error('[server] gagal menyimpan catatan:', err)
     res.status(500).json({ error: err.message })
   }
 })
@@ -227,7 +253,7 @@ app.delete('/api/images/:id', async (req, res) => {
   res.json({ ok: true })
 })
 
-/** Buang gambar yatim — tidak lagi dirujuk trade manapun. */
+/** Buang gambar yatim — tidak lagi dirujuk trade maupun catatan manapun. */
 app.post('/api/images/prune', async (_req, res) => {
   try {
     const trades = await readJSON(TRADES_FILE, [])
@@ -240,6 +266,11 @@ app.post('/api/images/prune', async (_req, res) => {
         const list = Array.isArray(v) ? v : v ? [v] : []
         for (const shot of list) if (shot?.id) used.add(shot.id)
       }
+    }
+    // Gambar yang ditempel di catatan juga hidup di data/images/.
+    const notes = await readJSON(NOTES_FILE, [])
+    for (const n of Array.isArray(notes) ? notes : []) {
+      for (const b of n.blocks || []) if (b.kind === 'image' && b.image?.id) used.add(b.image.id)
     }
     const files = await fs.readdir(IMAGES_DIR)
     const orphans = files.filter((f) => !used.has(f) && !f.endsWith('.tmp'))
@@ -254,6 +285,7 @@ app.post('/api/images/prune', async (_req, res) => {
 
 app.get('/api/status', async (_req, res) => {
   const trades = await readJSON(TRADES_FILE, [])
+  const notes = await readJSON(NOTES_FILE, [])
   let imageCount = 0
   let imageBytes = 0
   try {
@@ -269,6 +301,8 @@ app.get('/api/status', async (_req, res) => {
     tradesFile: TRADES_FILE,
     imagesDir: IMAGES_DIR,
     tradeCount: Array.isArray(trades) ? trades.length : 0,
+    notesFile: NOTES_FILE,
+    noteCount: Array.isArray(notes) ? notes.length : 0,
     imageCount,
     imageBytes,
     compress: COMPRESS,
@@ -298,6 +332,7 @@ await ensureDirs()
 app.listen(PORT, () => {
   console.log(`\n  Server jurnal siap di http://localhost:${PORT}`)
   console.log(`  Data  : ${path.relative(ROOT, TRADES_FILE)}`)
+  console.log(`  Notes : ${path.relative(ROOT, NOTES_FILE)}`)
   console.log(`  Gambar: ${path.relative(ROOT, IMAGES_DIR)}/`)
   console.log(`  Kompresi: ${COMPRESS ? `WebP q${WEBP_QUALITY}` : 'mati'}\n`)
 })

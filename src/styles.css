@@ -162,19 +162,27 @@ select.input { cursor: pointer; appearance: none;
 
 /* — segmented control — */
 .seg {
-  display: inline-flex; overflow: hidden;
+  display: inline-flex; align-items: stretch; gap: 2px;
+  padding: 3px;
+  background: var(--color-inset);
   border: 1px solid var(--color-divider); border-radius: var(--radius-md);
 }
 .seg-opt {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 7px 12px; font-size: 13px; cursor: pointer; user-select: none;
-  background: transparent; border: 0; color: inherit; font-family: inherit;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 5px 11px; font-size: 13px; line-height: 1.3; cursor: pointer; user-select: none;
+  background: transparent; border: 0; border-radius: calc(var(--radius-md) - 3px);
+  color: color-mix(in srgb, var(--color-text) 62%, transparent); font-family: inherit;
   transition: background 160ms ease-out, color 160ms ease-out;
 }
-.seg-opt + .seg-opt { border-left: 1px solid var(--color-divider); }
-.seg-opt.is-active { color: var(--color-accent); box-shadow: inset 0 0 0 1px var(--color-accent); }
-.seg-opt:not(.is-active):hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
-.seg-sm .seg-opt { padding: 4px 9px; font-size: 12px; }
+.seg-opt:not(.is-active):hover { background: color-mix(in srgb, var(--color-text) 8%, transparent); color: var(--color-text); }
+.seg-opt.is-active {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+.seg-opt:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
+.seg-opt:disabled { opacity: 0.4; cursor: not-allowed; }
+.seg-sm { padding: 2px; }
+.seg-sm .seg-opt { padding: 4px 9px; font-size: 12px; border-radius: calc(var(--radius-md) - 2px); }
 
 /* — cards — */
 .card {
@@ -446,6 +454,18 @@ select.input { cursor: pointer; appearance: none;
   flex: none; animation: pulse 1800ms ease-in-out infinite;
 }
 @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
+/* Open order: bentuk sama dengan posisi berjalan, tapi titik kosong & bingkai putus-putus. */
+.hollow-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  box-shadow: inset 0 0 0 1px var(--color-neutral-400);
+}
+.order-row {
+  padding: calc(var(--space-3) - 1px); border-radius: var(--radius-md);
+  border: 1px dashed var(--color-neutral-600);
+}
+.btn-loss { color: var(--color-loss); border-color: var(--color-loss); }
+.btn-loss:hover:not(:disabled) { background: color-mix(in srgb, var(--color-loss) 12%, transparent); }
+.btn-loss:active:not(:disabled) { background: color-mix(in srgb, var(--color-loss) 22%, transparent); }
 .lightbox {
   position: fixed; inset: 0; z-index: 90; background: rgba(10, 11, 18, 0.92);
   display: grid; place-items: center; padding: 40px; cursor: zoom-out;
@@ -467,3 +487,308 @@ select.input { cursor: pointer; appearance: none;
 .cal-cell:not(.is-empty):hover { box-shadow: inset 0 0 0 1px var(--color-neutral-600); }
 .cal-cell.is-today { box-shadow: inset 0 0 0 2px var(--color-accent) !important; }
 .page { max-width: 1280px; margin: 0 auto; padding: 0 var(--space-8) 96px; }
+
+/* ─────────────────────────── Daftar exit (tutup sebagian) ─────────────────────────── */
+
+.exit-row {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3); border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: inset 0 0 0 1px var(--color-neutral-800);
+}
+
+.exit-row.is-running {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+.exit-row-time {
+  width: 52px; flex: none; font-size: 10px; line-height: 1.35;
+  color: var(--color-neutral-600);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Catatan — "E · Catatan" di Konsep Desain
+   ══════════════════════════════════════════════════════════════ */
+
+.notes-shell {
+  flex-direction: row; gap: 0; padding: 0; overflow: hidden;
+  background: var(--color-bg);
+  height: calc(100vh - 88px); min-height: 560px; margin-top: var(--space-2);
+}
+.page-notes { padding-bottom: var(--space-4); }
+
+/* chip tombol di halaman ini tetap bergaris, seperti di desain */
+.notes-shell .tag-btn.tag-outline { box-shadow: inset 0 0 0 1px var(--color-accent); }
+
+/* — daftar — */
+.notes-list {
+  width: 272px; flex: none; overflow-y: auto;
+  box-shadow: inset -1px 0 0 var(--color-neutral-800);
+  padding: 16.8px 11.2px; display: flex; flex-direction: column; gap: 11.2px;
+}
+.note-month {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--color-neutral-600); padding: 5.6px 5.6px 0;
+}
+.note-row {
+  padding: 8.4px 11.2px; border-radius: var(--radius-md); cursor: pointer;
+  box-shadow: inset 0 0 0 1px var(--color-neutral-800);
+  transition: box-shadow 160ms ease-out, background 160ms ease-out;
+}
+.note-row:hover { box-shadow: inset 0 0 0 1px var(--color-neutral-600); }
+.note-row.is-active { background: var(--color-surface); box-shadow: inset 0 0 0 1px var(--color-accent); }
+
+/* — pin & seret-urutkan — */
+.note-zone { display: flex; flex-direction: column; gap: 5.6px; transition: opacity 160ms ease-out; }
+/* Zona yang tidak bisa menerima catatan yang sedang diseret diredupkan. */
+.note-zone.is-locked { opacity: 0.4; }
+.note-zone .note-month { display: flex; align-items: center; gap: 5px; }
+.note-row { position: relative; }
+.note-row.is-dragging { opacity: 0.35; }
+.note-row.drop-before::before,
+.note-row.drop-after::after {
+  content: ''; position: absolute; left: 4px; right: 4px; height: 2px; border-radius: 1px;
+  background: var(--color-accent); pointer-events: none;
+}
+.note-row.drop-before::before { top: -4px; }
+.note-row.drop-after::after { bottom: -4px; }
+/* Pegangan seret: enam titik di tepi kiri, muncul saat hover. */
+.note-grip {
+  position: absolute; left: 3px; top: 50%; width: 4px; height: 12px; transform: translateY(-50%);
+  background-image: radial-gradient(circle, var(--color-neutral-600) 1px, transparent 1.2px);
+  background-size: 4px 4px; opacity: 0; transition: opacity 160ms ease-out; cursor: grab;
+}
+.note-row:hover .note-grip { opacity: 1; }
+.note-pin {
+  display: inline-grid; place-items: center; width: 18px; height: 18px; padding: 0; margin: -3px 0;
+  border: 0; border-radius: 4px; background: none; cursor: pointer;
+  color: var(--color-neutral-600); opacity: 0; transition: opacity 160ms ease-out, color 160ms ease-out;
+}
+.note-row:hover .note-pin, .note-pin:focus-visible { opacity: 1; }
+.note-pin:hover { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 8%, transparent); }
+.note-pin.is-on { opacity: 1; color: var(--color-accent); }
+.note-pin:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.note-dot { width: 5px; height: 5px; border-radius: 50%; flex: none; display: inline-block; }
+.note-kind {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--color-neutral-500);
+}
+.note-snippet {
+  font-size: 11px; line-height: 1.45; margin-top: 2.8px; color: var(--color-neutral-600);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.note-count { font-size: 10px; color: var(--color-neutral-500); }
+.note-list-empty { font-size: 12px; color: var(--color-neutral-600); padding: 5.6px; line-height: 1.6; }
+
+/* — editor — */
+.note-editor {
+  flex: 1; min-width: 0; overflow-y: auto;
+  padding: 22.4px 28px 72px; display: flex; flex-direction: column; gap: 16.8px;
+}
+.note-stamp { font-size: 11px; color: var(--color-neutral-600); display: inline-flex; align-items: center; white-space: pre; }
+.note-date {
+  background: transparent; border: 0; padding: 0; font: inherit; color: inherit; color-scheme: dark;
+  width: 84px; cursor: pointer;
+}
+.note-date::-webkit-calendar-picker-indicator { opacity: 0; width: 0; margin: 0; }
+.note-date:hover { color: var(--color-neutral-400); }
+.note-title {
+  width: 100%; background: transparent; border: 0; padding: 0; margin: 0;
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 27px; line-height: 1.2; letter-spacing: -0.015em; color: var(--color-text);
+}
+.note-title::placeholder { color: var(--color-neutral-700); }
+.tag-draft {
+  background: transparent; border: 0; border-bottom: 1px solid var(--color-accent);
+  color: var(--color-text); font-size: 11px; padding: 2px 0; width: 110px;
+}
+.note-body { display: flex; flex-direction: column; gap: 11.2px; max-width: 660px; }
+.note-block { position: relative; }
+
+.mt-wrap { position: relative; }
+.note-text {
+  display: block; width: 100%; margin: 0; padding: 0; border: 0; background: transparent;
+  resize: none; overflow: hidden; font: inherit; font-size: 14px; line-height: 1.7;
+  color: var(--color-neutral-300); caret-color: var(--color-accent);
+  white-space: pre-wrap; overflow-wrap: break-word; min-height: 1.7em;
+}
+textarea.note-text { min-height: 1.7em; }
+.note-text::placeholder { color: var(--color-neutral-700); }
+.note-text.is-rendered { cursor: text; }
+.note-text:focus-visible, .ghost-input:focus-visible, .note-title:focus-visible, .note-heading:focus-visible,
+.img-name:focus-visible, .tag-draft:focus-visible, .note-date:focus-visible { outline: none; }
+.phase-text { cursor: text; }
+
+.note-heading {
+  width: 100%; background: transparent; border: 0; padding: 0; margin-top: 5.6px;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--color-neutral-500);
+}
+.note-heading::placeholder { color: var(--color-neutral-700); }
+.note-heading:focus { color: var(--color-accent); }
+
+.ghost-input {
+  background: transparent; border: 0; padding: 0; margin: 0; min-width: 0;
+  color: inherit; font: inherit; width: 100%;
+}
+.ghost-input::placeholder { color: var(--color-neutral-700); }
+
+/* — @mention — */
+.mention {
+  position: relative; cursor: pointer; white-space: nowrap; color: var(--color-accent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--color-accent) 45%, transparent);
+  transition: background 200ms ease-out;
+}
+.mention:hover { color: var(--color-accent-400); }
+.mention.is-flash { background: color-mix(in srgb, var(--color-accent) 28%, transparent); border-radius: 3px; }
+.mention-pop {
+  position: absolute; left: 0; top: calc(100% + 6px); z-index: 40;
+  width: 260px; padding: 6px; display: flex; flex-direction: column; gap: 5px;
+  background: var(--color-surface); border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+  white-space: normal; cursor: default; color: var(--color-text);
+}
+.mention-pop-img {
+  display: block; aspect-ratio: 16 / 10; border-radius: 6px; overflow: hidden; background: var(--color-bg);
+}
+.mention-pop-img img { width: 100%; height: 100%; object-fit: cover; }
+.mention-pop-cap { font-size: 10px; color: var(--color-neutral-500); padding: 0 2px; }
+
+.mention-menu {
+  position: absolute; z-index: 45; width: 340px; padding: 4px;
+  background: var(--color-surface); border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+}
+.mm-section {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--color-neutral-600); padding: 6px 8px 3px;
+}
+.mm-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border-radius: var(--radius-sm); cursor: pointer; font-size: 13px;
+}
+.mm-item.is-cursor { background: color-mix(in srgb, var(--color-accent) 18%, transparent); }
+.mm-thumb {
+  width: 30px; height: 20px; flex: none; border-radius: 3px; overflow: hidden;
+  background: var(--color-bg); box-shadow: inset 0 0 0 1px var(--color-neutral-800);
+}
+.mm-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.mm-foot {
+  display: flex; justify-content: space-between; gap: 8px; margin-top: 2px; padding: 5px 8px 3px;
+  border-top: 1px solid var(--color-neutral-900); font-size: 11px; color: var(--color-neutral-600);
+}
+.mm-note { font-size: 11px; color: var(--color-neutral-600); padding: 4px 8px; line-height: 1.5; }
+
+/* — blok fase — */
+.note-phase { border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--color-neutral-800); }
+.phase-head {
+  display: flex; align-items: center; gap: 8.4px; padding: 5.6px 8.4px 5.6px 11.2px;
+  background: var(--color-surface); border-radius: var(--radius-md) var(--radius-md) 0 0;
+  box-shadow: inset 0 -1px 0 var(--color-neutral-800), inset 0 0 0 1px var(--color-neutral-800);
+}
+.phase-kicker {
+  font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-accent); white-space: nowrap;
+}
+.phase-head .shot-btn { width: 20px; height: 20px; font-size: 10px; opacity: 0; transition: opacity 160ms; }
+.note-phase:hover .phase-head .shot-btn { opacity: 1; }
+.phase-grid { display: grid; grid-template-columns: 96px 1fr; }
+.phase-label {
+  padding: 11.2px; display: flex; flex-direction: column; gap: 2.8px; position: relative;
+  box-shadow: inset -1px 0 0 var(--color-neutral-800), inset 0 -1px 0 var(--color-neutral-800);
+}
+.phase-text { padding: 11.2px; box-shadow: inset 0 -1px 0 var(--color-neutral-800); min-width: 0; }
+.phase-name { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-neutral-500); }
+.phase-row-del { font-size: 10px; color: var(--color-neutral-600); text-align: left; opacity: 0; margin-top: 2px; }
+.phase-label:hover .phase-row-del { opacity: 1; }
+.phase-add { font-size: 11px; margin: 4px 6px; }
+
+/* — gambar — */
+.note-img { display: flex; flex-direction: column; gap: 5.6px; }
+.note-img-frame {
+  position: relative; border-radius: var(--radius-md); overflow: hidden;
+  background: var(--color-surface); box-shadow: inset 0 0 0 1px var(--color-neutral-800);
+  display: grid; place-items: center; min-height: 120px;
+  transition: box-shadow 200ms ease-out;
+}
+.note-img-frame img { max-width: 100%; max-height: 440px; width: auto; object-fit: contain; cursor: zoom-in; }
+.note-img-frame .shot-actions { opacity: 0; transition: opacity 160ms ease-out; }
+.note-img-frame:hover .shot-actions { opacity: 1; }
+.note-img.is-flash .note-img-frame { box-shadow: inset 0 0 0 2px var(--color-accent), 0 0 0 4px color-mix(in srgb, var(--color-accent) 25%, transparent); }
+.img-badge {
+  position: absolute; left: 8.4px; top: 8.4px; font-size: 10px; padding: 2.8px 5.6px;
+  border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+.img-meta { display: flex; align-items: baseline; gap: 11.2px; }
+.img-name {
+  width: 190px; flex: none; background: transparent; border: 0; padding: 2px 0; font-size: 12px;
+  color: var(--color-accent); border-bottom: 1px solid transparent;
+}
+.img-name:focus { border-bottom-color: var(--color-accent); }
+.img-name.is-empty { border-bottom: 1px dashed var(--color-neutral-700); }
+.img-name::placeholder { color: var(--color-neutral-600); }
+.img-hint { font-size: 10px; color: var(--color-neutral-600); }
+.img-caption {
+  display: flex; align-items: baseline; gap: 5.6px; font-size: 12px; line-height: 1.6; color: var(--color-neutral-500);
+}
+
+/* — checklist — */
+.note-checklist { display: flex; flex-direction: column; gap: 4px; }
+.check-item { display: flex; align-items: center; gap: 8.4px; font-size: 14px; line-height: 1.7; color: var(--color-neutral-300); }
+.check-item.is-done input { color: var(--color-neutral-600); text-decoration: line-through; }
+.check-box {
+  width: 15px; height: 15px; flex: none; border-radius: 4px; border: 0; padding: 0; cursor: pointer;
+  background: transparent; box-shadow: inset 0 0 0 1px var(--color-neutral-600);
+  display: inline-grid; place-items: center; color: var(--color-bg); font-size: 11px; line-height: 1;
+}
+.check-box:hover { box-shadow: inset 0 0 0 1px var(--color-accent); }
+.check-box.is-done { background: var(--color-accent); box-shadow: none; }
+.check-foot { display: flex; gap: 11.2px; font-size: 10px; color: var(--color-neutral-600); padding-left: 23px; }
+.check-foot .link-btn { font-size: 10px; opacity: 0; }
+.note-checklist:hover .check-foot .link-btn { opacity: 1; }
+
+/* — baris sisip — */
+.insert-bar { display: flex; align-items: center; gap: 5.6px; padding-top: 5.6px; flex-wrap: wrap; }
+
+/* — trade tertaut — */
+.linked-row {
+  display: flex; align-items: center; gap: 11.2px; padding: 8.4px 11.2px; cursor: pointer;
+  border-radius: var(--radius-md); background: var(--color-surface);
+  box-shadow: inset 0 0 0 1px var(--color-neutral-800); transition: box-shadow 160ms ease-out;
+}
+.linked-row:hover { box-shadow: inset 0 0 0 1px var(--color-neutral-600); }
+.linked-x { width: 14px; text-align: center; font-size: 11px; color: var(--color-neutral-700); cursor: pointer; }
+.linked-row:hover .linked-x { color: var(--color-neutral-500); }
+.linked-x:hover { color: var(--color-loss) !important; }
+
+/* — popover & menu — */
+.popover {
+  position: absolute; top: calc(100% + 6px); z-index: 50; padding: 4px;
+  background: var(--color-surface); border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+}
+.menu-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px;
+  border-radius: var(--radius-sm); background: none; border: 0; cursor: pointer; text-align: left;
+  color: var(--color-text); font: inherit; font-size: 13px;
+}
+.menu-item:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.menu-item.danger { color: var(--color-loss); }
+.btn-split { position: relative; display: inline-flex; }
+.btn-split > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.btn-split > .btn:nth-child(2) {
+  border-top-left-radius: 0; border-bottom-left-radius: 0; border-left-color: transparent;
+  padding-inline: 8px; box-shadow: inset 1px 0 0 color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+
+/* — keadaan kosong: kartu template — */
+.tpl-card {
+  display: flex; flex-direction: column; gap: 8.4px; padding: 11.2px; text-align: left; cursor: pointer;
+  border: 0; border-radius: var(--radius-md); background: var(--color-bg); color: var(--color-text); font: inherit;
+  box-shadow: inset 0 0 0 1px var(--color-neutral-800); transition: box-shadow 160ms ease-out;
+}
+.tpl-card:hover { box-shadow: inset 0 0 0 1px var(--color-accent); }
+
+/* — kalender: hari yang punya catatan — */
+.cal-cell { position: relative; }
+.cal-note-dot {
+  position: absolute; top: 6px; right: 6px; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--color-accent);
+}

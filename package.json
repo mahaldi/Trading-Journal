@@ -11,7 +11,7 @@
     "start": "node server/index.js",
     "compress": "node scripts/compress-existing.js",
     "compress:dry": "node scripts/compress-existing.js --dry-run",
-    "test": "node src/lib/calc.test.mjs && node src/lib/tags.test.mjs"
+    "test": "node src/lib/calc.test.mjs && node src/lib/tags.test.mjs && node src/lib/notes.test.mjs"
   },
   "dependencies": {
     "express": "^4.21.2",

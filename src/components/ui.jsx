@@ -16,6 +16,7 @@ export function Segmented({ options, value, onChange, small, style }) {
             type="button"
             className={'seg-opt' + (value === val ? ' is-active' : '')}
             onClick={() => onChange(val)}
+            disabled={typeof o === 'object' ? !!o.disabled : false}
             title={typeof o === 'object' ? o.title : undefined}
           >
             {label}

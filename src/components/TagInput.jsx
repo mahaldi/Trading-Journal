@@ -3,7 +3,7 @@ import { normalizeTag, similarTags, rankTags, SEED_TAG_SUGGESTIONS, SOFT_TAG_LIM
 import { moneyCompact, toneClass } from '../lib/format'
 
 /**
- * Input tag strategi — empat keadaan sesuai desain B4:
+ * Input tag strategi — empat keadaan sesuai desain B7:
  *
  *  1 kosong        satu baris penjelasan + saran bawaan yang bisa diklik sekali
  *  2 memilih       daftar tag terpakai, diurut frekuensi lalu kemiripan teks,

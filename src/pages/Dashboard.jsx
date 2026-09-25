@@ -1,14 +1,16 @@
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import EquityCurve from '../components/EquityCurve'
+import ExitList from '../components/ExitList'
 import { normalize as normalizeShots } from '../components/ScreenshotSlots'
 import { Segmented } from '../components/ui'
 import { imageURL } from '../lib/storage'
 import {
-  summarize, deriveTrade, openTrades, closedTrades, sortByDate,
-  effectiveDate, deviationLabel, tagLibrary,
+  summarize, deriveTrade, openTrades, pendingTrades, closedTrades, sortByDate,
+  effectiveDate, deviationLabel, tagLibrary, orderPlacedAt,
 } from '../lib/calc'
-import { money, moneyCompact, rVal, pct, price, size as fmtSize, shortDate, stamp, toneClass } from '../lib/format'
+import { money, moneyCompact, rVal, pct, price, size as fmtSize, shortDate, stamp, toneClass, ago } from '../lib/format'
 import { baseUnitShort } from '../lib/pairs'
+import { typeOf } from '../lib/notes'
 
 const FILTERS = [
   { value: 'all', label: 'Semua' },
@@ -16,15 +18,27 @@ const FILTERS = [
   { value: 'short', label: 'Short' },
   { value: 'win', label: 'Menang' },
   { value: 'loss', label: 'Kalah' },
+  { value: 'scaled', label: 'Scale-out', title: 'Trade dengan lebih dari satu exit' },
 ]
 
-export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, onCloseTrade, onDelete, onLightbox, newTradeId }) {
+export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, onCloseTrade, onPartialClose, onDelete, onLightbox, newTradeId, notesByTrade, onOpenNote }) {
   const [curveUnit, setCurveUnit] = useState('$')
   const [filter, setFilter] = useState('all')
   const [openRow, setOpenRow] = useState(null)
+  const [openRunning, setOpenRunning] = useState(null)
+  const [sortExits, setSortExits] = useState(false)
 
   const s = useMemo(() => summarize(trades), [trades])
   const running = useMemo(() => sortByDate(openTrades(allTrades), -1), [allTrades])
+  const orders = useMemo(() => sortByDate(pendingTrades(allTrades), -1), [allTrades])
+
+  // "dipasang 6j lalu" ikut bergerak tanpa perlu memuat ulang halaman.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!orders.length) return
+    const id = setInterval(() => setNow(Date.now()), 60000)
+    return () => clearInterval(id)
+  }, [orders.length])
   const topTags = useMemo(() => tagLibrary(trades).slice(0, 3), [trades])
 
   const history = useMemo(() => {
@@ -32,8 +46,12 @@ export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, 
     if (filter === 'long' || filter === 'short') rows = rows.filter((t) => t.direction === filter)
     if (filter === 'win') rows = rows.filter((t) => deriveTrade(t).outcome === 'win')
     if (filter === 'loss') rows = rows.filter((t) => deriveTrade(t).outcome === 'loss')
+    if (filter === 'scaled') rows = rows.filter((t) => deriveTrade(t).exitCount > 1)
+    if (sortExits) {
+      rows = [...rows].sort((a, b) => deriveTrade(b).exitCount - deriveTrade(a).exitCount)
+    }
     return rows
-  }, [trades, filter])
+  }, [trades, filter, sortExits])
 
   // Sparkline jumlah trade per hari untuk kartu Total Trades
   const volumeBars = useMemo(() => {
@@ -58,6 +76,7 @@ export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, 
           <div className="metric-sub">
             setelah fees · {s.total} trade selesai
             {running.length > 0 && <> · <span style={{ color: 'var(--color-accent)' }}>{running.length} berjalan belum dihitung</span></>}
+            {orders.length > 0 && <> · <span style={{ color: 'var(--color-neutral-400)' }}>{orders.length} open order</span></>}
           </div>
         </div>
 
@@ -148,10 +167,58 @@ export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, 
         </div>
       </div>
 
-      {/* ── Posisi berjalan ── */}
-      {running.length > 0 && (
+      {/* ── Open order (belum filled) + posisi berjalan ── */}
+      {(running.length > 0 || orders.length > 0) && (
         <div className="card elev-sm" style={{ padding: 'var(--space-6)', marginTop: 'var(--space-6)' }}>
-          <div className="metric-label" style={{ marginBottom: 'var(--space-3)' }}>
+          {orders.length > 0 && (
+            <>
+              <div className="metric-label" style={{ marginBottom: 'var(--space-3)' }}>
+                Open order · {orders.length}
+                <span style={{ textTransform: 'none', letterSpacing: 0, marginLeft: 8, color: 'var(--color-neutral-700)' }}>
+                  belum filled — risikonya belum dihitung ke akun
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                {orders.map((t) => {
+                  const d = deriveTrade(t)
+                  const since = ago(orderPlacedAt(t), now)
+                  return (
+                    <div key={t.id} className="order-row">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                        <span className="hollow-dot" />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, fontWeight: 500 }}>
+                            {t.pair} {t.direction === 'long' ? '▲' : '▼'} {t.timeframe}
+                          </div>
+                          <div className="mono" style={{ fontSize: 10, color: 'var(--color-neutral-600)' }}>
+                            limit {price(d.entry)} · SL {price(d.sl)} · {fmtSize(d.size)} {baseUnitShort(t.pair)}
+                            {d.plannedR != null && ` · rencana ${rVal(d.plannedR, { sign: false })}`}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div className="mono" style={{ fontSize: 12, color: 'var(--color-neutral-400)' }}>menunggu</div>
+                          <div className="mono" style={{ fontSize: 10, color: 'var(--color-neutral-600)' }}>
+                            dipasang {since === 'baru saja' ? since : `${since} lalu`}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+                          <button className="btn btn-primary btn-sm" onClick={() => onCloseTrade(t)}
+                            title="Order ini belum terisi — pilih: sudah filled atau hapus">
+                            Tutup trade
+                          </button>
+                          <button className="btn btn-secondary btn-sm" onClick={() => onEdit(t)}>Edit</button>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </>
+          )}
+
+          {running.length > 0 && (
+          <>
+          <div className="metric-label" style={{ marginBottom: 'var(--space-3)', marginTop: orders.length ? 'var(--space-6)' : 0 }}>
             Posisi berjalan · {running.length}
             <span style={{ textTransform: 'none', letterSpacing: 0, marginLeft: 8, color: 'var(--color-neutral-700)' }}>
               tidak dihitung ke Net PnL maupun Win Rate sampai ditutup
@@ -160,38 +227,73 @@ export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
             {running.map((t) => {
               const d = deriveTrade(t)
+              const expanded = openRunning === t.id
+              const restPct = d.remainingPortion != null ? Math.round(d.remainingPortion * 1000) / 10 : null
               return (
                 <div key={t.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 'var(--space-3)', padding: 'var(--space-3)',
+                  padding: 'var(--space-3)',
                   borderRadius: 'var(--radius-md)', background: 'var(--color-bg)',
                   boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 40%, transparent)',
                 }}>
-                  <span className="pulse-dot" />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>
-                      {t.pair} {t.direction === 'long' ? '▲' : '▼'} {t.timeframe}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                    <span className="pulse-dot" />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {t.pair} {t.direction === 'long' ? '▲' : '▼'} {t.timeframe}
+                        {d.isPartial && <span className="tag tag-accent" style={{ fontSize: 10 }}>Sebagian ditutup</span>}
+                      </div>
+                      <div className="mono" style={{ fontSize: 10, color: 'var(--color-neutral-600)' }}>
+                        entry {price(d.entry)} · SL {price(d.slAfter)} · {fmtSize(d.remainingSize)} {baseUnitShort(t.pair)}
+                        {d.isPartial ? ` dari ${fmtSize(d.size)}` : ''}
+                        {d.plannedR != null && ` · rencana ${rVal(d.plannedR, { sign: false })}`}
+                      </div>
                     </div>
-                    <div className="mono" style={{ fontSize: 10, color: 'var(--color-neutral-600)' }}>
-                      entry {price(d.entry)} · SL {price(d.sl)} · {fmtSize(d.size)} {baseUnitShort(t.pair)}
-                      {d.plannedR != null && ` · rencana ${rVal(d.plannedR, { sign: false })}`}
+                    {d.isPartial && (
+                      <div style={{ textAlign: 'right' }}>
+                        <div className={'mono ' + toneClass(d.realizedR)} style={{ fontSize: 13 }}>
+                          {rVal(d.realizedR)}
+                        </div>
+                        <div className="mono" style={{ fontSize: 10, color: 'var(--color-neutral-600)' }}>terkunci</div>
+                      </div>
+                    )}
+                    <div style={{ textAlign: 'right' }}>
+                      <div className={'mono ' + toneClass(d.floatingR)} style={{ fontSize: 13 }}>
+                        {d.floatingR != null ? rVal(d.floatingR) : '—'}
+                      </div>
+                      <div className="mono" style={{ fontSize: 10, color: 'var(--color-neutral-600)' }}>
+                        {d.floatingPnl != null ? `${money(d.floatingPnl)} floating` : 'isi harga terakhir'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+                      <button className="btn btn-secondary btn-sm" onClick={() => onPartialClose(t)}
+                        title="Tutup sebagian posisi, sisanya tetap berjalan">
+                        {d.isPartial ? 'Tutup sebagian lagi' : '◗ Sebagian'}
+                      </button>
+                      <button className="btn btn-primary btn-sm" onClick={() => onCloseTrade(t)}>
+                        {d.isPartial && restPct != null ? `Tutup sisa ${restPct}%` : 'Tutup trade'}
+                      </button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => onEdit(t)}>Edit</button>
+                      {d.isPartial && (
+                        <button className="btn btn-secondary btn-sm btn-icon"
+                          onClick={() => setOpenRunning(expanded ? null : t.id)}
+                          title={expanded ? 'Sembunyikan daftar exit' : `Lihat ${d.exitCount} exit`}>
+                          {expanded ? '▴' : '▾'}
+                        </button>
+                      )}
                     </div>
                   </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div className={'mono ' + toneClass(d.floatingR)} style={{ fontSize: 13 }}>
-                      {d.floatingR != null ? rVal(d.floatingR) : '—'}
+
+                  {d.isPartial && expanded && (
+                    <div style={{ marginTop: 'var(--space-3)', paddingTop: 'var(--space-3)', boxShadow: 'inset 0 1px 0 var(--color-neutral-800)' }}>
+                      <ExitList trade={t} d={d} compact />
                     </div>
-                    <div className="mono" style={{ fontSize: 10, color: 'var(--color-neutral-600)' }}>
-                      {d.floatingPnl != null ? money(d.floatingPnl) : 'isi harga terakhir'}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-                    <button className="btn btn-primary btn-sm" onClick={() => onCloseTrade(t)}>Tutup trade</button>
-                    <button className="btn btn-secondary btn-sm" onClick={() => onEdit(t)}>Edit</button>
-                  </div>
+                  )}
                 </div>
               )
             })}
           </div>
+          </>
+          )}
         </div>
       )}
 
@@ -224,6 +326,13 @@ export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, 
                 <th>TF</th>
                 <th>Strategi</th>
                 <th>Emosi</th>
+                <th
+                  style={{ textAlign: 'right', cursor: 'pointer', color: sortExits ? 'var(--color-accent)' : undefined }}
+                  onClick={() => setSortExits((v) => !v)}
+                  title="Jumlah exit — klik untuk mengurutkan"
+                >
+                  Exit {sortExits ? '▾' : ''}
+                </th>
                 <th style={{ textAlign: 'right' }}>R</th>
                 <th style={{ textAlign: 'right', paddingRight: 16.8 }}>PnL</th>
               </tr>
@@ -258,6 +367,9 @@ export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, 
                         ) : <span style={{ color: 'var(--color-neutral-700)', fontSize: 12 }}>—</span>}
                       </td>
                       <td style={{ fontSize: 12, color: 'var(--color-neutral-500)' }}>{t.emotion || '—'}</td>
+                      <td className="mono" style={{ textAlign: 'right', color: d.exitCount > 1 ? 'var(--color-accent)' : 'var(--color-neutral-700)' }}>
+                        {d.exitCount > 1 ? `${d.exitCount}×` : '1'}
+                      </td>
                       <td className={'mono ' + toneClass(d.actualR)} style={{ textAlign: 'right' }}>
                         {d.actualR != null ? rVal(d.actualR) : '—'}
                       </td>
@@ -267,8 +379,8 @@ export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, 
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan={8} style={{ padding: 0 }}>
-                          <TradeDetail trade={t} d={d} onEdit={onEdit} onDelete={onDelete} onLightbox={onLightbox} />
+                        <td colSpan={9} style={{ padding: 0 }}>
+                          <TradeDetail trade={t} d={d} onEdit={onEdit} onDelete={onDelete} onLightbox={onLightbox} notes={notesByTrade?.get(t.id)} onOpenNote={onOpenNote} />
                         </td>
                       </tr>
                     )}
@@ -293,15 +405,17 @@ function Stat({ label, value }) {
 }
 
 /** Panel ekspansi inline: niat · bukti · hasil, berdampingan. */
-function TradeDetail({ trade: t, d, onEdit, onDelete, onLightbox }) {
-  const dev = deviationLabel(d.deviationR)
+function TradeDetail({ trade: t, d, onEdit, onDelete, onLightbox, notes, onOpenNote }) {
+  const dev = deviationLabel(d.deviationR, { scaled: d.exitCount > 1 })
   const shots = normalizeShots(t.shots)
+  const scaled = d.exitCount > 1
   return (
     <div style={{
       background: 'var(--color-inset)', boxShadow: 'inset 0 0 0 1px var(--color-neutral-800)',
       borderRadius: 'var(--radius-md)', margin: '0 11.2px 11.2px', padding: 'var(--space-6)',
-      display: 'grid', gridTemplateColumns: '1fr 1fr 260px', gap: 'var(--space-6)',
+      display: 'flex', flexDirection: 'column', gap: 'var(--space-6)',
     }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 260px', gap: 'var(--space-6)' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
         <div className="section-step" style={{ marginBottom: 0 }}>Setup (Entry)</div>
         <ShotGallery images={shots.setup} label="screenshot chart · entry" onLightbox={onLightbox} />
@@ -350,7 +464,60 @@ function TradeDetail({ trade: t, d, onEdit, onDelete, onLightbox }) {
         </div>
       </div>
     </div>
+
+    {notes?.length > 0 && (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        <div className="section-step" style={{ marginBottom: 0 }}>Catatan tertaut · {notes.length}</div>
+        {notes.map((n) => (
+          <div
+            key={n.id}
+            className="linked-row"
+            style={{ background: 'var(--color-bg)' }}
+            onClick={(e) => { e.stopPropagation(); onOpenNote?.(n.id) }}
+          >
+            <span className="note-dot" style={{ background: typeOf(n.type).color }} />
+            <span style={{ fontSize: 13, flex: 1 }}>{n.title || 'Tanpa judul'}</span>
+            <span className="note-kind">{typeOf(n.type).label}</span>
+            <span className="mono" style={{ fontSize: 10, color: 'var(--color-neutral-600)', width: 44, textAlign: 'right' }}>{shortDate(n.date)}</span>
+          </div>
+        ))}
+      </div>
+    )}
+
+    {scaled && (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 'var(--space-6)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+          <div className="section-step" style={{ marginBottom: 0 }}>
+            Scale out · {d.exitCount} exit
+          </div>
+          <ExitList trade={t} d={d} compact />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          <div className="metric-label">Hasil gabungan</div>
+          <Stat label="Exit rata-rata tertimbang" value={<span className="mono">{price(d.avgExit)}</span>} />
+          <Stat label="Realized PnL total" value={<span className={'mono ' + toneClass(d.realizedPnl)}>{money(d.realizedPnl)}</span>} />
+          <Stat label="Fee gabungan" value={<span className="mono loss">{d.totalFees ? `−${money(d.totalFees, { sign: false })}` : '—'}</span>} />
+          <Stat label="Rentang exit" value={<span className="mono">{exitSpan(d)}</span>} />
+          <Stat label="Dihitung di Win Rate" value={<span className="mono" style={{ color: 'var(--color-neutral-400)' }}>1 trade</span>} />
+          <div style={{ fontSize: 11, lineHeight: 1.6, color: 'var(--color-neutral-600)' }}>
+            R aktual adalah rata-rata tertimbang semua exit, bukan harga exit terakhir — jadi
+            scale-out tidak membuat angkanya terlihat lebih buruk dari kenyataannya.
+          </div>
+        </div>
+      </div>
+    )}
+    </div>
   )
+}
+
+/** Rentang tanggal dari exit pertama sampai terakhir. */
+function exitSpan(d) {
+  const dates = d.legs.map((l) => l.date).filter(Boolean).sort()
+  if (!dates.length) return '—'
+  const a = shortDate(dates[0])
+  const b = shortDate(dates[dates.length - 1])
+  return a === b ? a : `${a} → ${b}`
 }
 
 /**
