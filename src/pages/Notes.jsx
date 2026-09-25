@@ -582,7 +582,8 @@ function NoteEditor({ note, isNew, trades, tradesById, saveState, patch, onDelet
                 <div key={t.id} className="linked-row" onClick={() => onOpenTrade(t)}>
                   <span className="mono" style={{ fontSize: 10, color: 'var(--color-neutral-600)', width: 52 }}>{shortDate(effectiveDate(t))}</span>
                   <span style={{ fontSize: 13, flex: 1 }}>{tradeLabel(t)}</span>
-                  {t.status !== 'closed' && <span className="mono" style={{ fontSize: 11, color: 'var(--color-accent)' }}>berjalan</span>}
+                  {t.status === 'pending' && <span className="mono" style={{ fontSize: 11, color: 'var(--color-neutral-400)' }}>open order</span>}
+                  {t.status !== 'closed' && t.status !== 'pending' && <span className="mono" style={{ fontSize: 11, color: 'var(--color-accent)' }}>berjalan</span>}
                   <span className={'mono ' + toneClass(r)} style={{ fontSize: 12 }}>{r != null ? rVal(r).replace(/(\.\d)\d/, '$1') : '—'}</span>
                   <span className={'mono ' + toneClass(d.netPnl ?? d.realizedPnl)} style={{ fontSize: 12, minWidth: 64, textAlign: 'right' }}>
                     {money(d.netPnl ?? d.realizedPnl, { decimals: 0 })}

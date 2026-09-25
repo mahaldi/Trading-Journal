@@ -3,6 +3,15 @@
    ══════════════════════════════════════════════════════════════ */
 
 export const EMOTIONS = ['Confident', 'Calm', 'FOMO', 'Revenge', 'Hesitant', 'Bored']
+
+/**
+ * Siklus hidup trade: Open order → Berjalan → Selesai.
+ *  - 'pending' : limit sudah dipasang, harga belum menyentuh (belum ada posisi)
+ *  - 'open'    : berjalan — posisi di pasar
+ *  - 'closed'  : selesai — hasil terisi
+ * Open order tidak punya partial fill: ia hanya bisa jadi 'open' atau dihapus.
+ */
+export const STATUS_LABEL = { pending: 'Open order', open: 'Berjalan', closed: 'Selesai' }
 export const TIMEFRAMES = ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1']
 
 const num = (v) => {
@@ -99,6 +108,9 @@ export function deriveTrade(t) {
       : null
 
   const closed = t.status === 'closed'
+  // Open order belum punya posisi: rencana tetap dihitung, tapi tidak ada
+  // floating, exit, maupun risiko yang sedang terpakai di akun.
+  const pending = t.status === 'pending'
 
   /* ── exit bertahap ── */
   const legs = exitLegs(t)
@@ -140,14 +152,14 @@ export function deriveTrade(t) {
   // Floating hanya untuk sisa posisi yang masih di pasar.
   let floatingPnl = null
   let floatingR = null
-  if (!closed && mark != null && entry != null && remainingSize != null && remainingSize > EPS) {
+  if (!closed && !pending && mark != null && entry != null && remainingSize != null && remainingSize > EPS) {
     floatingPnl = (mark - entry) * remainingSize * mul - fees
     if (riskAmount) floatingR = floatingPnl / riskAmount
   }
 
   // Risiko yang masih di meja: sisa size dikali jarak ke SL yang berlaku sekarang.
   const remainingRisk =
-    entry != null && slAfter != null && remainingSize != null
+    !pending && entry != null && slAfter != null && remainingSize != null
       ? Math.abs(entry - slAfter) * remainingSize
       : null
 
@@ -156,6 +168,7 @@ export function deriveTrade(t) {
   return {
     entry, exit, sl, slAfter, tp, size, fees, mark, mul,
     notional, riskPerUnit, riskAmount, rewardAmount,
+    pending,
     plannedR, grossPnl, netPnl, actualR,
     floatingPnl, floatingR, deviationR,
     legs, exitCount, closedSize, remainingSize,
@@ -193,7 +206,29 @@ export function effectiveDate(t) {
 }
 
 export const closedTrades = (trades) => trades.filter((t) => t.status === 'closed')
-export const openTrades = (trades) => trades.filter((t) => t.status !== 'closed')
+/** Posisi berjalan saja — open order yang belum terisi tidak termasuk. */
+export const openTrades = (trades) => trades.filter((t) => t.status !== 'closed' && t.status !== 'pending')
+/** Open order: limit terpasang, belum filled. */
+export const pendingTrades = (trades) => trades.filter((t) => t.status === 'pending')
+
+/** Tanggal lokal 'YYYY-MM-DD' dari sebuah timestamp ISO. */
+function localDay(iso) {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/**
+ * Kapan open order dipasang. Memakai waktu saat dicatat (`placedAt`), kecuali
+ * tanggal pasang diubah manual ke hari lain — maka dihitung dari awal hari itu.
+ */
+export function orderPlacedAt(t) {
+  const ts = t.placedAt || t.createdAt || null
+  const day = t.date || null
+  if (ts && (!day || localDay(ts) === day)) return ts
+  if (day) return new Date(`${day}T00:00:00`).toISOString()
+  return ts
+}
 
 /** Urut menaik berdasarkan tanggal efektif, lalu waktu pembuatan. */
 export function sortByDate(trades, dir = 1) {

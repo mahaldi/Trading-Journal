@@ -3,7 +3,8 @@
  * Tanpa framework — cukup assert bawaan Node.
  */
 import assert from 'node:assert/strict'
-import { deriveTrade, summarize, equityCurve, groupPerformance, rDistribution, applyPartialExit, exitLegs } from './calc.js'
+import { deriveTrade, summarize, equityCurve, groupPerformance, rDistribution, applyPartialExit, exitLegs, openTrades, pendingTrades, closedTrades, dailyTotals, orderPlacedAt } from './calc.js'
+import { ago } from './format.js'
 import { splitPair, baseUnitShort, searchPairs, buildPairIndex } from './pairs.js'
 
 let passed = 0
@@ -194,7 +195,7 @@ test('konversi USD → unit memakai harga entry', () => {
 
 
 /* ══════════════════════════════════════════════════════════════
-   Tutup sebagian posisi (B5)
+   Tutup sebagian posisi (B6)
    ══════════════════════════════════════════════════════════════ */
 
 console.log('\ntutup sebagian')
@@ -280,6 +281,73 @@ test('pnlOverride tetap menang atas hasil scale-out', () => {
   let t = applyPartialExit(open80(), { size: 0.05, price: 65900, fees: 2.7 })
   t = { ...t, pnlOverride: 100 }
   close(deriveTrade(t).netPnl, 100)
+})
+
+
+/* ══════════════════════════════════════════════════════════════
+   Open order — belum filled (B5)
+   ══════════════════════════════════════════════════════════════ */
+
+console.log('\nopen order')
+
+const order = () => ({
+  ...base, id: 'o1', status: 'pending', closeDate: null, exit: null, fees: 0,
+  pair: 'ETHUSDT', entry: 3120, size: 2, sl: 3070, tp: 3240,
+  createdAt: '2026-09-23T02:00:00.000Z', date: '2026-09-23',
+})
+
+test('rencana R:R dan risiko dolar tetap dihitung', () => {
+  const d = deriveTrade(order())
+  assert.equal(d.pending, true)
+  close(d.plannedR, 120 / 50)          // |3240 − 3120| / |3120 − 3070|
+  close(d.riskAmount, 100)             // 50 × 2
+  close(d.rewardAmount, 240)
+})
+
+test('belum ada hasil, floating, atau risiko terpakai', () => {
+  const d = deriveTrade({ ...order(), markPrice: 3200 })
+  assert.equal(d.netPnl, null)
+  assert.equal(d.floatingPnl, null)
+  assert.equal(d.floatingR, null)
+  assert.equal(d.remainingRisk, null)
+  assert.equal(d.isPartial, false)
+  assert.equal(d.outcome, 'none')
+})
+
+test('terpisah dari posisi berjalan dan trade selesai', () => {
+  const running = { ...order(), id: 'r1', status: 'open' }
+  const done = { ...base, id: 'c1', entry: 100, exit: 110, size: 1, fees: 0 }
+  const all = [order(), running, done]
+  assert.deepEqual(pendingTrades(all).map((t) => t.id), ['o1'])
+  assert.deepEqual(openTrades(all).map((t) => t.id), ['r1'])
+  assert.deepEqual(closedTrades(all).map((t) => t.id), ['c1'])
+})
+
+test('tidak masuk statistik, kurva, maupun kalender', () => {
+  const s = summarize([order()])
+  assert.equal(s.total, 0)
+  assert.equal(s.netPnl, 0)
+  assert.equal(equityCurve([order()]).length, 0)
+  assert.equal(dailyTotals([order()]).size, 0)
+  assert.equal(groupPerformance([order()], 'pair').length, 0)
+})
+
+test('waktu pasang: dari createdAt, atau awal hari bila tanggal diubah', () => {
+  const o = order()
+  // createdAt 02:00Z = 09:00 WIB pada hari yang sama di zona +07
+  const sameDay = { ...o, date: new Date(o.createdAt).toLocaleDateString('en-CA') }
+  assert.equal(orderPlacedAt(sameDay), o.createdAt)
+  assert.equal(orderPlacedAt({ ...o, placedAt: '2026-09-22T10:00:00.000Z', date: new Date('2026-09-22T10:00:00.000Z').toLocaleDateString('en-CA') }), '2026-09-22T10:00:00.000Z')
+  const moved = orderPlacedAt({ ...o, date: '2026-09-01' })
+  assert.equal(moved, new Date('2026-09-01T00:00:00').toISOString())
+})
+
+test('ago: menit · jam · hari', () => {
+  const now = Date.parse('2026-09-23T08:00:00.000Z')
+  assert.equal(ago('2026-09-23T07:59:40.000Z', now), 'baru saja')
+  assert.equal(ago('2026-09-23T07:48:00.000Z', now), '12m')
+  assert.equal(ago('2026-09-23T02:00:00.000Z', now), '6j')
+  assert.equal(ago('2026-09-20T07:00:00.000Z', now), '3h')
 })
 
 

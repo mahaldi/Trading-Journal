@@ -271,7 +271,7 @@ export function TradeLine({ t, linked }) {
         {linked && <span className="mono" style={{ fontSize: 10, color: 'var(--color-accent)', marginLeft: 6 }}>tertaut</span>}
       </span>
       <span className={'mono ' + toneClass(r)} style={{ fontSize: 12 }}>
-        {t.status === 'closed' ? (r != null ? rVal(r).replace(/(\.\d)\d/, '$1') : '—') : 'jalan'}
+        {t.status === 'closed' ? (r != null ? rVal(r).replace(/(\.\d)\d/, '$1') : '—') : t.status === 'pending' ? 'order' : 'jalan'}
       </span>
     </>
   )
@@ -317,7 +317,7 @@ function TradePreview({ t }) {
       <span className="mono" style={{ fontSize: 11, display: 'flex', gap: 10 }}>
         <span style={{ color: 'var(--color-neutral-600)' }}>{shortDate(effectiveDate(t))}</span>
         <span className={toneClass(d.actualR)}>{d.actualR != null ? rVal(d.actualR) : '—'}</span>
-        <span className={toneClass(d.netPnl)}>{d.netPnl != null ? money(d.netPnl) : t.status === 'closed' ? '—' : 'berjalan'}</span>
+        <span className={toneClass(d.netPnl)}>{d.netPnl != null ? money(d.netPnl) : t.status === 'closed' ? '—' : t.status === 'pending' ? 'open order' : 'berjalan'}</span>
       </span>
       <span className="mono mention-pop-cap" style={{ padding: 0 }}>klik untuk membuka trade</span>
     </span>

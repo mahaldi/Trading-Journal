@@ -14,7 +14,7 @@ import { normalize as normalizeShots, allShots } from './components/ScreenshotSl
 import { buildPairIndex } from './lib/pairs'
 import { allTags, applyPartialExit, effectiveDate, tagLibrary } from './lib/calc'
 import { buildTagStats } from './lib/tags'
-import { fileSize } from './lib/format'
+import { fileSize, price as fmtPrice } from './lib/format'
 import { NOTE_TYPES, blankNote, imageBlocks, notesByTrade, notesByDate } from './lib/notes'
 
 const PAGES = [
@@ -44,6 +44,8 @@ export default function App() {
   const [form, setForm] = useState({ open: false, mode: 'create', trade: null })
   const [lightbox, setLightbox] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
+  // Open order yang ditekan "Tutup trade" — belum ada hasil untuk diisi.
+  const [confirmOrder, setConfirmOrder] = useState(null)
   const [newTradeId, setNewTradeId] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
 
@@ -133,7 +135,7 @@ export default function App() {
   /* ── pintasan: N membuka panel entri ── */
   useEffect(() => {
     function onKey(e) {
-      if (form.open || confirmDelete || showSettings || confirmNoteDelete) return
+      if (form.open || confirmDelete || confirmOrder || showSettings || confirmNoteDelete) return
       const tag = document.activeElement?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
       if (e.key === 'n' || e.key === 'N') {
@@ -143,7 +145,7 @@ export default function App() {
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [form.open, confirmDelete, showSettings, confirmNoteDelete])
+  }, [form.open, confirmDelete, confirmOrder, showSettings, confirmNoteDelete])
 
   const pairIndex = useMemo(() => buildPairIndex(trades), [trades])
   const tagSuggestions = useMemo(() => allTags(trades), [trades])
@@ -168,7 +170,16 @@ export default function App() {
 
   const openCreate = useCallback(() => setForm({ open: true, mode: 'create', trade: null }), [])
   const openEdit = useCallback((t) => setForm({ open: true, mode: 'edit', trade: t }), [])
-  const openClose = useCallback((t) => setForm({ open: true, mode: 'close', trade: t }), [])
+  // Tombol "Tutup trade" sama di semua status, tapi pada open order ia
+  // membuka konfirmasi — bukan panel hasil.
+  const openClose = useCallback((t) => {
+    if (t.status === 'pending') setConfirmOrder(t)
+    else setForm({ open: true, mode: 'close', trade: t })
+  }, [])
+  const openFill = useCallback((t) => {
+    setConfirmOrder(null)
+    setForm({ open: true, mode: 'fill', trade: t })
+  }, [])
   const openPartial = useCallback((t) => setForm({ open: true, mode: 'partial', trade: t }), [])
 
   function handleSave(trade, isNew) {
@@ -206,6 +217,7 @@ export default function App() {
     }
     setTrades((prev) => prev.filter((x) => x.id !== t.id))
     setConfirmDelete(null)
+    setConfirmOrder(null)
     setTimeout(refreshStatus, 600)
   }
 
@@ -402,6 +414,13 @@ export default function App() {
         onCancel={() => setConfirmDelete(null)}
       />
 
+      <OrderCloseDialog
+        order={confirmOrder}
+        onCancel={() => setConfirmOrder(null)}
+        onFilled={() => openFill(confirmOrder)}
+        onDelete={() => handleDelete(confirmOrder)}
+      />
+
       <Confirm
         open={!!confirmNoteDelete}
         title="Hapus catatan ini?"
@@ -462,6 +481,48 @@ export default function App() {
         </div>
       )}
     </>
+  )
+}
+
+/**
+ * Konfirmasi "Tutup trade" pada open order. Tiga jalan keluar:
+ * batal · sudah filled → Berjalan · hapus order (permanen, tanpa undo).
+ */
+function OrderCloseDialog({ order, onCancel, onFilled, onDelete }) {
+  useEffect(() => {
+    if (!order) return
+    function onKey(e) {
+      if (e.key === 'Escape') onCancel()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [order, onCancel])
+  if (!order) return null
+  return (
+    <div className="dialog-backdrop" onClick={onCancel}>
+      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="order-close-title" onClick={(e) => e.stopPropagation()}>
+        <div className="dialog-title" id="order-close-title">Order ini belum terisi</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', fontSize: 14 }}>
+          <p style={{ margin: 0, lineHeight: 1.6, color: 'var(--color-neutral-400)' }}>
+            <span style={{ color: 'var(--color-text)' }}>
+              {order.pair} {order.direction === 'long' ? '▲' : '▼'} limit {fmtPrice(order.entry)}
+            </span>{' '}
+            masih berstatus open order. Menutupnya akan{' '}
+            <span style={{ color: 'var(--color-text)' }}>menghapus order ini dari jurnal</span> — tidak masuk
+            histori, kalender, maupun statistik.
+          </p>
+          <div className="inset-box" style={{ background: 'var(--color-bg)', padding: '8.4px 11.2px', fontSize: 12, lineHeight: 1.6, color: 'var(--color-neutral-400)' }}>
+            Kalau order sebenarnya sudah filled, ubah statusnya ke{' '}
+            <span className="mono" style={{ color: 'var(--color-text)' }}>Berjalan</span> dulu, lalu tutup seperti biasa.
+          </div>
+        </div>
+        <div className="dialog-actions" style={{ flexWrap: 'wrap' }}>
+          <button className="btn btn-ghost" onClick={onCancel} autoFocus>Batal</button>
+          <button className="btn btn-secondary" onClick={onFilled}>Sudah filled → Berjalan</button>
+          <button className="btn btn-loss" onClick={onDelete} title="Dihapus permanen — tidak bisa di-undo">Hapus order</button>
+        </div>
+      </div>
+    </div>
   )
 }
 

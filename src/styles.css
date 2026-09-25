@@ -454,6 +454,18 @@ select.input { cursor: pointer; appearance: none;
   flex: none; animation: pulse 1800ms ease-in-out infinite;
 }
 @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.35 } }
+/* Open order: bentuk sama dengan posisi berjalan, tapi titik kosong & bingkai putus-putus. */
+.hollow-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  box-shadow: inset 0 0 0 1px var(--color-neutral-400);
+}
+.order-row {
+  padding: calc(var(--space-3) - 1px); border-radius: var(--radius-md);
+  border: 1px dashed var(--color-neutral-600);
+}
+.btn-loss { color: var(--color-loss); border-color: var(--color-loss); }
+.btn-loss:hover:not(:disabled) { background: color-mix(in srgb, var(--color-loss) 12%, transparent); }
+.btn-loss:active:not(:disabled) { background: color-mix(in srgb, var(--color-loss) 22%, transparent); }
 .lightbox {
   position: fixed; inset: 0; z-index: 90; background: rgba(10, 11, 18, 0.92);
   display: grid; place-items: center; padding: 40px; cursor: zoom-out;

@@ -1,14 +1,14 @@
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import EquityCurve from '../components/EquityCurve'
 import ExitList from '../components/ExitList'
 import { normalize as normalizeShots } from '../components/ScreenshotSlots'
 import { Segmented } from '../components/ui'
 import { imageURL } from '../lib/storage'
 import {
-  summarize, deriveTrade, openTrades, closedTrades, sortByDate,
-  effectiveDate, deviationLabel, tagLibrary,
+  summarize, deriveTrade, openTrades, pendingTrades, closedTrades, sortByDate,
+  effectiveDate, deviationLabel, tagLibrary, orderPlacedAt,
 } from '../lib/calc'
-import { money, moneyCompact, rVal, pct, price, size as fmtSize, shortDate, stamp, toneClass } from '../lib/format'
+import { money, moneyCompact, rVal, pct, price, size as fmtSize, shortDate, stamp, toneClass, ago } from '../lib/format'
 import { baseUnitShort } from '../lib/pairs'
 import { typeOf } from '../lib/notes'
 
@@ -30,6 +30,15 @@ export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, 
 
   const s = useMemo(() => summarize(trades), [trades])
   const running = useMemo(() => sortByDate(openTrades(allTrades), -1), [allTrades])
+  const orders = useMemo(() => sortByDate(pendingTrades(allTrades), -1), [allTrades])
+
+  // "dipasang 6j lalu" ikut bergerak tanpa perlu memuat ulang halaman.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!orders.length) return
+    const id = setInterval(() => setNow(Date.now()), 60000)
+    return () => clearInterval(id)
+  }, [orders.length])
   const topTags = useMemo(() => tagLibrary(trades).slice(0, 3), [trades])
 
   const history = useMemo(() => {
@@ -67,6 +76,7 @@ export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, 
           <div className="metric-sub">
             setelah fees · {s.total} trade selesai
             {running.length > 0 && <> · <span style={{ color: 'var(--color-accent)' }}>{running.length} berjalan belum dihitung</span></>}
+            {orders.length > 0 && <> · <span style={{ color: 'var(--color-neutral-400)' }}>{orders.length} open order</span></>}
           </div>
         </div>
 
@@ -157,10 +167,58 @@ export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, 
         </div>
       </div>
 
-      {/* ── Posisi berjalan ── */}
-      {running.length > 0 && (
+      {/* ── Open order (belum filled) + posisi berjalan ── */}
+      {(running.length > 0 || orders.length > 0) && (
         <div className="card elev-sm" style={{ padding: 'var(--space-6)', marginTop: 'var(--space-6)' }}>
-          <div className="metric-label" style={{ marginBottom: 'var(--space-3)' }}>
+          {orders.length > 0 && (
+            <>
+              <div className="metric-label" style={{ marginBottom: 'var(--space-3)' }}>
+                Open order · {orders.length}
+                <span style={{ textTransform: 'none', letterSpacing: 0, marginLeft: 8, color: 'var(--color-neutral-700)' }}>
+                  belum filled — risikonya belum dihitung ke akun
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                {orders.map((t) => {
+                  const d = deriveTrade(t)
+                  const since = ago(orderPlacedAt(t), now)
+                  return (
+                    <div key={t.id} className="order-row">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                        <span className="hollow-dot" />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, fontWeight: 500 }}>
+                            {t.pair} {t.direction === 'long' ? '▲' : '▼'} {t.timeframe}
+                          </div>
+                          <div className="mono" style={{ fontSize: 10, color: 'var(--color-neutral-600)' }}>
+                            limit {price(d.entry)} · SL {price(d.sl)} · {fmtSize(d.size)} {baseUnitShort(t.pair)}
+                            {d.plannedR != null && ` · rencana ${rVal(d.plannedR, { sign: false })}`}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div className="mono" style={{ fontSize: 12, color: 'var(--color-neutral-400)' }}>menunggu</div>
+                          <div className="mono" style={{ fontSize: 10, color: 'var(--color-neutral-600)' }}>
+                            dipasang {since === 'baru saja' ? since : `${since} lalu`}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+                          <button className="btn btn-primary btn-sm" onClick={() => onCloseTrade(t)}
+                            title="Order ini belum terisi — pilih: sudah filled atau hapus">
+                            Tutup trade
+                          </button>
+                          <button className="btn btn-secondary btn-sm" onClick={() => onEdit(t)}>Edit</button>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </>
+          )}
+
+          {running.length > 0 && (
+          <>
+          <div className="metric-label" style={{ marginBottom: 'var(--space-3)', marginTop: orders.length ? 'var(--space-6)' : 0 }}>
             Posisi berjalan · {running.length}
             <span style={{ textTransform: 'none', letterSpacing: 0, marginLeft: 8, color: 'var(--color-neutral-700)' }}>
               tidak dihitung ke Net PnL maupun Win Rate sampai ditutup
@@ -234,6 +292,8 @@ export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, 
               )
             })}
           </div>
+          </>
+          )}
         </div>
       )}
 

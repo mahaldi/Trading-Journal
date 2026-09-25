@@ -10,7 +10,7 @@ import { size as fmtSize, money } from '../lib/format'
  * angka dolar dibagi harga entry menjadi unit. Karena itu mode USD butuh
  * Entry Price terisi — kalau kosong, toggle-nya dinonaktifkan.
  */
-export default function PositionSizeInput({ value, onChange, pair, entry, mode, onModeChange }) {
+export default function PositionSizeInput({ value, onChange, pair, entry, mode, onModeChange, entryLabel = 'Entry Price' }) {
   const unit = baseUnitShort(pair) || 'Unit'
   const hasEntry = Number.isFinite(entry) && entry > 0
   const usable = mode === 'usd' ? 'usd' : 'unit'
@@ -88,7 +88,7 @@ export default function PositionSizeInput({ value, onChange, pair, entry, mode, 
       </div>
       <div className="mono" style={{ fontSize: 10, color: 'var(--color-neutral-600)', marginTop: 4 }}>
         {!hasEntry && usable === 'usd' ? (
-          <span style={{ color: 'var(--color-loss)' }}>Isi Entry Price dulu untuk mode USD</span>
+          <span style={{ color: 'var(--color-loss)' }}>Isi {entryLabel} dulu untuk mode USD</span>
         ) : Number.isFinite(value) ? (
           usable === 'usd' ? (
             <>= {fmtSize(value)} {unit} @ entry</>

@@ -86,6 +86,19 @@ export function stamp(iso) {
   return `${dt.getDate()} ${MONTHS_ID[dt.getMonth()]} ${hh}:${mm}`
 }
 
+/** Durasi sejak `iso` sampai `now` → '12m', '6j', '3h' (menit · jam · hari). */
+export function ago(iso, now = Date.now()) {
+  if (!iso) return '—'
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t)) return '—'
+  const mins = Math.max(0, Math.floor((now - t) / 60000))
+  if (mins < 1) return 'baru saja'
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}j`
+  return `${Math.floor(hours / 24)}h`
+}
+
 export function todayISO() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
