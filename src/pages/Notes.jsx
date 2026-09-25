@@ -4,30 +4,39 @@ import { putImage, deleteImage } from '../lib/storage'
 import { deriveTrade, effectiveDate, sortByDate } from '../lib/calc'
 import { money, rVal, shortDate, longDate, toneClass } from '../lib/format'
 import {
-  NOTE_TYPES, typeOf, groupByMonth, noteMatches, noteSnippet, linkedTradeIds, mentionedTradeIds,
+  NOTE_TYPES, typeOf, arrangeNotes, moveWithin, isPinned, noteMatches, noteSnippet, linkedTradeIds, mentionedTradeIds,
   imageBlocks, makeResolver, countMentions, uniqueImageName, renameMentions,
   textBlock, phaseBlock, checklistBlock, imageBlock, tradeLabel,
 } from '../lib/notes'
 
 /* ══════════════════════════════════════════════════════════════
    Tab Catatan — terpisah dari Notes pribadi dan berdiri sendiri dari
-   jurnal trade. Kiri: daftar dua baris per bulan. Kanan: editor mengalir.
+   jurnal trade. Kiri: daftar dua baris — yang disematkan di atas, lalu
+   catatan lain; keduanya bisa diurutkan dengan diseret. Kanan: editor mengalir.
    ══════════════════════════════════════════════════════════════ */
 
 export default function Notes({
   notes, trades, activeId, newNoteId, saveState,
-  onSelect, onCreate, onPatch, onDelete, onOpenTrade, onLightbox,
+  onSelect, onCreate, onPatch, onDelete, onOpenTrade, onLightbox, onArrange, onTogglePin,
 }) {
   const [query, setQuery] = useState('')
   const [kind, setKind] = useState('all')
+  // Seret-urutkan: catatan yang sedang diseret dan posisi jatuhnya.
+  const [drag, setDrag] = useState(null)            // { id, pinned }
+  const [over, setOver] = useState(null)            // { id, place: 'before' | 'after' }
 
   const tradesById = useMemo(() => new Map(trades.map((t) => [t.id, t])), [trades])
 
-  const filtered = useMemo(
-    () => notes.filter((n) => (kind === 'all' || n.type === kind) && noteMatches(n, query)),
-    [notes, kind, query]
+  // Zona lengkap (tanpa saringan) — dasar perhitungan urutan saat diseret,
+  // jadi menyeret di tampilan tersaring tetap menaruh catatan di tempat yang benar.
+  const zones = useMemo(() => arrangeNotes(notes), [notes])
+  const matches = useCallback(
+    (n) => (kind === 'all' || n.type === kind) && noteMatches(n, query),
+    [kind, query]
   )
-  const groups = useMemo(() => groupByMonth(filtered), [filtered])
+  const pinnedShown = useMemo(() => zones.pinned.filter(matches), [zones, matches])
+  const othersShown = useMemo(() => zones.others.filter(matches), [zones, matches])
+  const shownCount = pinnedShown.length + othersShown.length
   const counts = useMemo(() => {
     const c = {}
     for (const n of notes) c[n.type] = (c[n.type] || 0) + 1
@@ -37,9 +46,62 @@ export default function Notes({
   const active = notes.find((n) => n.id === activeId) || null
 
   // Belum ada yang dipilih → buka catatan teratas.
+  const firstShown = pinnedShown[0] || othersShown[0]
   useEffect(() => {
-    if (!active && groups[0]?.notes[0]) onSelect(groups[0].notes[0].id)
-  }, [active, groups, onSelect])
+    if (!active && firstShown) onSelect(firstShown.id)
+  }, [active, firstShown, onSelect])
+
+  /* ── seret ── */
+  function rowDragProps(n) {
+    const pinned = isPinned(n)
+    return {
+      dragging: drag?.id === n.id,
+      dropPlace: over?.id === n.id ? over.place : null,
+      onDragStart(e) {
+        e.dataTransfer.effectAllowed = 'move'
+        e.dataTransfer.setData('text/plain', n.id)
+        setDrag({ id: n.id, pinned })
+      },
+      onDragOver(e) {
+        // Hanya di zona yang sama: catatan biasa tidak bisa naik ke atas
+        // catatan yang disematkan, dan sebaliknya.
+        if (!drag || drag.pinned !== pinned) { setOver(null); return }
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        if (n.id === drag.id) { setOver(null); return }
+        const r = e.currentTarget.getBoundingClientRect()
+        const place = e.clientY < r.top + r.height / 2 ? 'before' : 'after'
+        if (over?.id !== n.id || over.place !== place) setOver({ id: n.id, place })
+      },
+      onDrop: dropHere,
+      onDragEnd() { setDrag(null); setOver(null) },
+    }
+  }
+
+  function dropHere(e) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (drag && over) {
+      const zone = drag.pinned ? zones.pinned : zones.others
+      onArrange(moveWithin(zone, drag.id, over.id, over.place, { pinned: drag.pinned }))
+    }
+    setDrag(null)
+    setOver(null)
+  }
+
+  // Celah di antara baris ikut menerima drop — posisi jatuh = garis terakhir yang tampil.
+  const zoneProps = (pinned) => ({
+    onDragOver(e) { if (drag && drag.pinned === pinned) e.preventDefault() },
+    onDrop: dropHere,
+  })
+
+  const renderRow = (n) => (
+    <NoteRow
+      key={n.id} note={n} active={n.id === activeId} tradesById={tradesById}
+      onClick={() => onSelect(n.id)} onTogglePin={() => onTogglePin(n.id)}
+      {...rowDragProps(n)}
+    />
+  )
 
   // Catatan baru harus terlihat di daftar walau filter sedang aktif.
   useEffect(() => {
@@ -76,17 +138,21 @@ export default function Notes({
           {notes.length === 0 && (
             <div className="note-list-empty">Belum ada catatan. Pilih titik awal di sebelah kanan.</div>
           )}
-          {notes.length > 0 && groups.length === 0 && (
+          {notes.length > 0 && shownCount === 0 && (
             <div className="note-list-empty">Tidak ada catatan yang cocok.</div>
           )}
-          {groups.map((g) => (
-            <div key={g.key} style={{ display: 'flex', flexDirection: 'column', gap: 5.6 }}>
-              <div className="note-month">{g.label}</div>
-              {g.notes.map((n) => (
-                <NoteRow key={n.id} note={n} active={n.id === activeId} tradesById={tradesById} onClick={() => onSelect(n.id)} />
-              ))}
+          {pinnedShown.length > 0 && (
+            <div className={'note-zone' + (drag && !drag.pinned ? ' is-locked' : '')} {...zoneProps(true)}>
+              <div className="note-month"><PinIcon filled size={9} /> Disematkan · {pinnedShown.length}</div>
+              {pinnedShown.map(renderRow)}
             </div>
-          ))}
+          )}
+          {othersShown.length > 0 && (
+            <div className={'note-zone' + (drag && drag.pinned ? ' is-locked' : '')} {...zoneProps(false)}>
+              {pinnedShown.length > 0 && <div className="note-month">Catatan lain</div>}
+              {othersShown.map(renderRow)}
+            </div>
+          )}
         </div>
       </aside>
 
@@ -100,6 +166,7 @@ export default function Notes({
           saveState={saveState}
           patch={(fn) => onPatch(active.id, fn)}
           onDelete={() => onDelete(active)}
+          onTogglePin={() => onTogglePin(active.id)}
           onOpenTrade={onOpenTrade}
           onLightbox={onLightbox}
         />
@@ -112,17 +179,41 @@ export default function Notes({
 
 /* ─────────────────────────── baris daftar ─────────────────────────── */
 
-function NoteRow({ note, active, tradesById, onClick }) {
+function NoteRow({
+  note, active, tradesById, onClick, onTogglePin,
+  dragging, dropPlace, onDragStart, onDragOver, onDrop, onDragEnd,
+}) {
   const t = typeOf(note.type)
   const imgs = imageBlocks(note).length
   const linked = linkedTradeIds(note, tradesById).length
   const snippet = noteSnippet(note, tradesById)
+  const pinned = isPinned(note)
   return (
-    <div className={'note-row' + (active ? ' is-active' : '')} onClick={onClick}>
+    <div
+      className={'note-row' + (active ? ' is-active' : '') + (dragging ? ' is-dragging' : '') + (dropPlace ? ` drop-${dropPlace}` : '')}
+      onClick={onClick}
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+    >
+      <span className="note-grip" aria-hidden="true" />
       <div style={{ display: 'flex', alignItems: 'center', gap: 5.6, marginBottom: 2.8 }}>
         <span className="note-dot" style={{ background: t.color }} />
         <span className="note-kind" style={{ color: active && note.type === 'event' ? 'var(--color-accent)' : undefined }}>{t.label}</span>
         <span style={{ flex: 1 }} />
+        <button
+          type="button"
+          className={'note-pin' + (pinned ? ' is-on' : '')}
+          onClick={(e) => { e.stopPropagation(); onTogglePin() }}
+          title={pinned ? 'Lepas sematan' : 'Sematkan di atas'}
+          aria-label={pinned ? 'Lepas sematan' : 'Sematkan di atas'}
+          aria-pressed={pinned}
+          draggable={false}
+        >
+          <PinIcon filled={pinned} />
+        </button>
         <span className="mono" style={{ fontSize: 10, color: 'var(--color-neutral-600)' }}>{shortDate(note.date)}</span>
       </div>
       <div style={{ fontSize: 13, lineHeight: 1.35, color: note.title ? undefined : 'var(--color-neutral-600)' }}>
@@ -136,6 +227,18 @@ function NoteRow({ note, active, tradesById, onClick }) {
         </div>
       )}
     </div>
+  )
+}
+
+/** Ikon paku pin — terisi saat catatan disematkan. */
+function PinIcon({ filled, size = 12 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true"
+      fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.4"
+      strokeLinejoin="round" strokeLinecap="round" style={{ display: 'inline-block', verticalAlign: '-1px' }}>
+      <path d="M10 1.5 14.5 6 12.8 6.6 10.3 9.1 10 12.3 8.8 13.5 2.5 7.2 3.7 6 6.9 5.7 9.4 3.2Z" />
+      <path d="M5.6 10.4 1.8 14.2" fill="none" />
+    </svg>
   )
 }
 
@@ -174,7 +277,7 @@ function TemplatePicker({ onCreate }) {
 
 /* ─────────────────────────── editor ─────────────────────────── */
 
-function NoteEditor({ note, isNew, trades, tradesById, saveState, patch, onDelete, onOpenTrade, onLightbox }) {
+function NoteEditor({ note, isNew, trades, tradesById, saveState, patch, onDelete, onTogglePin, onOpenTrade, onLightbox }) {
   const [focus, setFocus] = useState(null)          // { id, pos, n } — blok yang harus difokus
   const [activeBlock, setActiveBlock] = useState(null)
   const [flashBlock, setFlashBlock] = useState(null)
@@ -422,6 +525,16 @@ function NoteEditor({ note, isNew, trades, tradesById, saveState, patch, onDelet
           {hhmm && ` · ${hhmm}`} · <span style={{ color: saveState === 'error' ? 'var(--color-loss)' : undefined }}>{saveText}</span>
         </span>
         <span style={{ flex: 1 }} />
+        <button
+          className="btn btn-secondary btn-icon"
+          title={isPinned(note) ? 'Lepas sematan' : 'Sematkan di atas daftar'}
+          aria-label={isPinned(note) ? 'Lepas sematan' : 'Sematkan di atas daftar'}
+          aria-pressed={isPinned(note)}
+          onClick={onTogglePin}
+          style={isPinned(note) ? { color: 'var(--color-accent)', borderColor: 'var(--color-accent)' } : undefined}
+        >
+          <PinIcon filled={isPinned(note)} size={14} />
+        </button>
         <span style={{ position: 'relative' }}>
           <button className="btn btn-secondary btn-icon" title="Tautkan trade" onClick={() => setMenu(menu === 'link' ? null : 'link')}>↗</button>
           {menu === 'link' && (

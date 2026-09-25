@@ -15,7 +15,7 @@ import { buildPairIndex } from './lib/pairs'
 import { allTags, applyPartialExit, effectiveDate, tagLibrary } from './lib/calc'
 import { buildTagStats } from './lib/tags'
 import { fileSize, price as fmtPrice } from './lib/format'
-import { NOTE_TYPES, blankNote, imageBlocks, notesByTrade, notesByDate } from './lib/notes'
+import { NOTE_TYPES, blankNote, imageBlocks, notesByTrade, notesByDate, togglePin } from './lib/notes'
 
 const PAGES = [
   { key: 'dashboard', label: 'Dashboard' },
@@ -244,6 +244,19 @@ export default function App() {
     }))
   }, [])
 
+  /** Urutan & pin hanya menata daftar — tidak dihitung sebagai "diubah" (updatedAt tetap). */
+  const arrangeNote = useCallback((patches) => {
+    if (!patches?.length) return
+    setNotes((prev) => prev.map((n) => {
+      const mine = patches.filter((p) => p.id === n.id)
+      return mine.length ? mine.reduce((acc, p) => ({ ...acc, [p.field]: p.value }), n) : n
+    }))
+  }, [])
+
+  const togglePinNote = useCallback((id) => {
+    setNotes((prev) => prev.map((n) => (n.id === id ? togglePin(n, prev) : n)))
+  }, [])
+
   const openNote = useCallback((id) => {
     setActiveNoteId(id)
     setPage('notes')
@@ -379,6 +392,8 @@ export default function App() {
             onCreate={createNote}
             onPatch={patchNote}
             onDelete={(n) => setConfirmNoteDelete(n)}
+            onArrange={arrangeNote}
+            onTogglePin={togglePinNote}
             onOpenTrade={openEdit}
             onLightbox={setLightbox}
           />

@@ -36,9 +36,6 @@ export const NOTE_TYPES = [
 
 export const typeOf = (key) => NOTE_TYPES.find((t) => t.key === key) || NOTE_TYPES[0]
 
-const MONTHS_FULL = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli',
-  'Agustus', 'September', 'Oktober', 'November', 'Desember']
-
 /* ─────────────────────────── id & tanggal ─────────────────────────── */
 
 export function uid(prefix) {
@@ -321,21 +318,100 @@ export function noteMatches(note, query) {
 const byNewest = (a, b) =>
   (b.date || '').localeCompare(a.date || '') || String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
 
-/** Kelompokkan per bulan, terbaru di atas. */
-export function groupByMonth(notes) {
-  const groups = []
-  const map = new Map()
-  for (const n of [...notes].sort(byNewest)) {
-    const key = (n.date || '').slice(0, 7) || 'tanpa-tanggal'
-    if (!map.has(key)) {
-      const [y, m] = key.split('-').map(Number)
-      const g = { key, label: y && m ? `${MONTHS_FULL[m - 1]} ${y}` : 'Tanpa tanggal', notes: [] }
-      map.set(key, g)
-      groups.push(g)
-    }
-    map.get(key).notes.push(n)
+/* ─────────────────────────── pin & urutan manual ───────────────────────────
+   Dua field opsional di notes.json, keduanya angka "peringkat" (besar = atas):
+     pinnedAt / pinOrder  catatan disematkan. pinOrder awal = waktu pin, jadi
+                          yang paling terakhir disematkan otomatis di paling atas.
+     order                urutan manual catatan biasa (tidak disematkan).
+   Tanpa `order`, peringkat diturunkan dari tanggal + jam dibuat — urutan lama
+   (terbaru di atas) tetap sama sampai pengguna menyeret sesuatu.
+   Menyeret hanya menulis satu angka: titik tengah antara dua tetangganya. */
+
+export const isPinned = (n) => !!n?.pinnedAt
+
+const DAY = 86400000
+
+/** Peringkat catatan biasa. */
+export function noteRank(n) {
+  if (Number.isFinite(n.order)) return n.order
+  const created = Date.parse(n.createdAt || '') || 0
+  const day = Date.parse(`${n.date || ''}T00:00:00Z`)
+  if (!Number.isFinite(day)) return created
+  return day + (((created % DAY) + DAY) % DAY)
+}
+
+/** Peringkat di antara catatan yang disematkan. */
+export function pinRank(n) {
+  if (Number.isFinite(n.pinOrder)) return n.pinOrder
+  return Date.parse(n.pinnedAt || '') || 0
+}
+
+const byRank = (rank) => (a, b) =>
+  rank(b) - rank(a) || String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
+
+/** Sematkan / lepas. Melepas mengembalikan catatan ke posisi lamanya di daftar biasa. */
+export function togglePin(note, notes = [], now = new Date()) {
+  if (isPinned(note)) {
+    const { pinnedAt, pinOrder, ...rest } = note
+    return rest
   }
-  return groups
+  // Selalu di atas semua yang sudah disematkan, walau urutannya pernah diseret.
+  const top = Math.max(now.getTime(), ...notes.filter(isPinned).map((n) => pinRank(n) + 1))
+  return { ...note, pinnedAt: now.toISOString(), pinOrder: top }
+}
+
+/**
+ * Peringkat baru untuk catatan yang diseret ke `index` di `list` (urutan tampil,
+ * atas → bawah, TANPA catatan yang diseret). Mengembalikan angka, atau null bila
+ * tidak ada perubahan. `rank` = noteRank atau pinRank.
+ */
+export function rankAt(list, index, rank) {
+  const above = index > 0 ? rank(list[index - 1]) : null
+  const below = index < list.length ? rank(list[index]) : null
+  if (above == null && below == null) return null
+  if (above == null) return below + 60000
+  if (below == null) return above - 60000
+  return (above + below) / 2
+}
+
+/**
+ * Pindahkan `dragId` ke posisi sebelum/sesudah `targetId` di dalam satu zona
+ * (daftar yang disematkan, atau daftar biasa — urutan lengkap, bukan yang tersaring).
+ * Mengembalikan daftar patch [{ id, field, value }] — biasanya satu — atau [] bila
+ * tidak ada yang berubah. Catatan tidak bisa pindah zona: target di luar zona ditolak.
+ */
+export function moveWithin(zoneList, dragId, targetId, place, { pinned = false } = {}) {
+  const rank = pinned ? pinRank : noteRank
+  const field = pinned ? 'pinOrder' : 'order'
+  const from = zoneList.findIndex((n) => n.id === dragId)
+  if (from === -1 || dragId === targetId) return []
+  if (!zoneList.some((n) => n.id === targetId)) return []
+  const rest = zoneList.filter((n) => n.id !== dragId)
+  const t = rest.findIndex((n) => n.id === targetId)
+  const index = place === 'after' ? t + 1 : t
+  // Tidak bergeser → tidak menulis apa pun.
+  const orderBefore = zoneList.map((n) => n.id)
+  const orderAfter = [...rest.slice(0, index).map((n) => n.id), dragId, ...rest.slice(index).map((n) => n.id)]
+  if (orderBefore.join() === orderAfter.join()) return []
+  const value = rankAt(rest, index, rank)
+  const above = index > 0 ? rank(rest[index - 1]) : null
+  const below = index < rest.length ? rank(rest[index]) : null
+  const fits = value != null && (above == null || value < above) && (below == null || value > below)
+  if (fits) return [{ id: dragId, field, value }]
+  // Celah habis (diseret puluhan kali ke titik yang sama) atau dua tetangga
+  // berperingkat sama → beri ulang peringkat seluruh zona dengan jarak rata.
+  const top = Math.max(...zoneList.map(rank))
+  return orderAfter.map((id, i) => ({ id, field, value: top - i * 60000 }))
+}
+
+/**
+ * Susunan daftar: yang disematkan di atas, lalu satu daftar datar catatan biasa.
+ * Tidak dikelompokkan per bulan — tanggal tetap tampil di tiap baris.
+ */
+export function arrangeNotes(notes) {
+  const pinned = notes.filter(isPinned).sort(byRank(pinRank))
+  const others = notes.filter((n) => !isPinned(n)).sort(byRank(noteRank))
+  return { pinned, others }
 }
 
 export const sortNotes = (notes) => [...notes].sort(byNewest)

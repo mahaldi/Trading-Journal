@@ -5,8 +5,9 @@
 import assert from 'node:assert/strict'
 import {
   blankNote, tokenize, makeResolver, renameMentions, countMentions, linkedTradeIds,
-  slugifyName, uniqueImageName, groupByMonth, noteMatches, noteSnippet, notesByTrade,
+  slugifyName, uniqueImageName, noteMatches, noteSnippet, notesByTrade,
   reviewSummary, isoWeek, textBlock, imageBlock, noteImageIds,
+  arrangeNotes, togglePin, moveWithin, isPinned,
 } from './notes.js'
 
 let passed = 0
@@ -81,11 +82,11 @@ test('pencarian ikut mengindeks nama gambar', () => {
   assert.equal(noteMatches(sampleNote(), 'retest-2110'), true)
   assert.equal(noteMatches(sampleNote(), 'tidak-ada'), false)
 })
-test('dikelompokkan per bulan, terbaru dulu', () => {
+test('daftar datar tanpa kelompok bulan, terbaru dulu', () => {
   const a = { ...blankNote(), date: '2026-07-28' }
   const b = { ...blankNote(), date: '2026-08-14' }
-  const g = groupByMonth([a, b])
-  assert.deepEqual(g.map((x) => x.label), ['Agustus 2026', 'Juli 2026'])
+  const { others } = arrangeNotes([a, b])
+  assert.deepEqual(others.map((n) => n.date), ['2026-08-14', '2026-07-28'])
 })
 test('id gambar catatan dikumpulkan untuk prune', () => {
   assert.deepEqual(noteImageIds([sampleNote()]), ['x.webp'])
@@ -105,6 +106,102 @@ test('review mengisi ringkasan dari trade periode itu', () => {
 })
 test('jenis tak dikenal jatuh ke catatan bebas', () => {
   assert.equal(blankNote('aneh').type, 'free')
+})
+
+console.log('\npin & urutan')
+const note = (id, date, time = '10:00') => ({ ...blankNote(), id, date, createdAt: `${date}T${time}:00.000Z` })
+const ids = (list) => list.map((n) => n.id)
+// Terapkan patch dari moveWithin ke daftar.
+const apply = (list, patches) => list.map((n) => {
+  const p = patches.filter((x) => x.id === n.id)
+  return p.reduce((acc, x) => ({ ...acc, [x.field]: x.value }), n)
+})
+
+test('tanpa pin & tanpa seret: urutan lama tetap (terbaru di atas)', () => {
+  const list = [note('a', '2026-09-01'), note('b', '2026-09-20'), note('c', '2026-09-20', '15:00')]
+  const { pinned, others } = arrangeNotes(list)
+  assert.equal(pinned.length, 0)
+  assert.deepEqual(ids(others), ['c', 'b', 'a'])
+})
+
+test('yang terakhir disematkan ada di paling atas', () => {
+  let list = [note('a', '2026-09-01'), note('b', '2026-09-20'), note('c', '2026-08-05')]
+  list = list.map((n) => (n.id === 'a' ? togglePin(n, list, new Date('2026-09-25T01:00:00Z')) : n))
+  list = list.map((n) => (n.id === 'c' ? togglePin(n, list, new Date('2026-09-25T02:00:00Z')) : n))
+  const { pinned, others } = arrangeNotes(list)
+  assert.deepEqual(ids(pinned), ['c', 'a'])
+  assert.deepEqual(ids(others), ['b'])   // yang disematkan keluar dari daftar biasa
+})
+
+test('pin baru tetap di atas walau urutan pin pernah diseret ke masa depan', () => {
+  let list = [note('a', '2026-09-01'), note('b', '2026-09-02')]
+  list = list.map((n) => (n.id === 'a' ? { ...togglePin(n, list), pinOrder: 9e15 } : n))
+  list = list.map((n) => (n.id === 'b' ? togglePin(n, list) : n))
+  assert.deepEqual(ids(arrangeNotes(list).pinned), ['b', 'a'])
+})
+
+test('lepas pin mengembalikan catatan ke posisi lamanya', () => {
+  const a = note('a', '2026-09-10')
+  const pinned = togglePin(a, [a])
+  assert.equal(isPinned(pinned), true)
+  const back = togglePin(pinned, [pinned])
+  assert.equal(isPinned(back), false)
+  assert.equal('pinOrder' in back, false)
+  const { others } = arrangeNotes([note('b', '2026-09-20'), back, note('c', '2026-09-01')])
+  assert.deepEqual(ids(others), ['b', 'a', 'c'])
+})
+
+test('seret di antara yang disematkan', () => {
+  let list = ['a', 'b', 'c'].map((id, i) => togglePin(note(id, '2026-09-01'), [], new Date(Date.UTC(2026, 8, 25, i))))
+  assert.deepEqual(ids(arrangeNotes(list).pinned), ['c', 'b', 'a'])
+  const zone = arrangeNotes(list).pinned
+  list = apply(list, moveWithin(zone, 'a', 'c', 'before', { pinned: true }))
+  assert.deepEqual(ids(arrangeNotes(list).pinned), ['a', 'c', 'b'])
+  const zone2 = arrangeNotes(list).pinned
+  list = apply(list, moveWithin(zone2, 'a', 'b', 'after', { pinned: true }))
+  assert.deepEqual(ids(arrangeNotes(list).pinned), ['c', 'b', 'a'])
+})
+
+test('seret catatan biasa, termasuk melewati bulan lain', () => {
+  let list = [note('a', '2026-07-03'), note('b', '2026-08-12'), note('c', '2026-09-20')]
+  const zone = arrangeNotes(list).others                           // c, b, a
+  list = apply(list, moveWithin(zone, 'a', 'c', 'before'))
+  assert.deepEqual(ids(arrangeNotes(list).others), ['a', 'c', 'b'])
+})
+
+test('catatan biasa tidak bisa diseret ke atas catatan yang disematkan', () => {
+  const p = togglePin(note('p', '2026-09-01'), [])
+  const list = [p, note('a', '2026-09-03'), note('x', '2026-08-03')]
+  const { pinned, others } = arrangeNotes(list)
+  assert.deepEqual(moveWithin(others, 'a', 'p', 'before'), [])
+  assert.deepEqual(moveWithin(pinned, 'p', 'a', 'after', { pinned: true }), [])
+})
+
+test('diseret ke tempat yang sama tidak menulis apa pun', () => {
+  const list = [note('a', '2026-09-03'), note('b', '2026-09-12')]
+  const zone = arrangeNotes(list).others                           // b, a
+  assert.deepEqual(moveWithin(zone, 'b', 'a', 'before'), [])
+  assert.deepEqual(moveWithin(zone, 'a', 'b', 'after'), [])
+})
+
+test('celah habis → seluruh zona diberi peringkat ulang, urutan tetap benar', () => {
+  let list = [note('a', '2026-09-03'), note('b', '2026-09-12'), note('c', '2026-09-20')]
+  // Bolak-balik menyeret ke titik yang sama sampai angka tengahnya habis.
+  for (let i = 0; i < 80; i++) {
+    const zone = arrangeNotes(list).others
+    const target = i % 2 ? 'b' : 'c'
+    const drag = zone.find((n) => n.id !== target && n.id !== zone[zone.length - 1].id)?.id || 'a'
+    list = apply(list, moveWithin(zone, drag, zone[zone.length - 1].id, 'before'))
+    const shown = ids(arrangeNotes(list).others)
+    assert.equal(new Set(shown).size, 3)
+  }
+  const zone = arrangeNotes(list).others
+  const last = zone[zone.length - 1].id
+  const first = zone[0].id
+  list = apply(list, moveWithin(zone, first, last, 'before'))
+  const after = ids(arrangeNotes(list).others)
+  assert.equal(after[1], first)
+  assert.equal(after[2], last)
 })
 
 console.log(`\n${passed} tes lulus\n`)
