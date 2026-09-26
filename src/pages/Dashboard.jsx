@@ -240,7 +240,11 @@ export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, 
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8 }}>
                         {t.pair} {t.direction === 'long' ? '▲' : '▼'} {t.timeframe}
+                        {t.source === 'binance' && <span className="src-tag" style={{ marginLeft: 0 }}>Binance</span>}
                         {d.isPartial && <span className="tag tag-accent" style={{ fontSize: 10 }}>Sebagian ditutup</span>}
+                        {needsSl(t) && (
+                          <button type="button" className="fill-sl" onClick={() => onEdit(t, { focus: 'sl' })}>lengkapi SL</button>
+                        )}
                       </div>
                       <div className="mono" style={{ fontSize: 10, color: 'var(--color-neutral-600)' }}>
                         entry {price(d.entry)} · SL {price(d.slAfter)} · {fmtSize(d.remainingSize)} {baseUnitShort(t.pair)}
@@ -351,7 +355,10 @@ export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, 
                       <td className="mono" style={{ paddingLeft: 16.8, color: 'var(--color-neutral-500)' }}>
                         {shortDate(effectiveDate(t))}
                       </td>
-                      <td style={{ fontWeight: 500 }}>{t.pair}</td>
+                      <td style={{ fontWeight: 500 }}>
+                        {t.pair}
+                        {t.source === 'binance' && <span className="src-tag" title="Diimpor dari Order History Binance">Binance</span>}
+                      </td>
                       <td>
                         <span className="tag" style={{
                           background: 'var(--color-neutral-900)',
@@ -371,7 +378,16 @@ export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, 
                         {d.exitCount > 1 ? `${d.exitCount}×` : '1'}
                       </td>
                       <td className={'mono ' + toneClass(d.actualR)} style={{ textAlign: 'right' }}>
-                        {d.actualR != null ? rVal(d.actualR) : '—'}
+                        {needsSl(t) ? (
+                          <button
+                            type="button"
+                            className="fill-sl"
+                            onClick={(e) => { e.stopPropagation(); onEdit(t, { focus: 'sl' }) }}
+                            title="Tanpa SL, R rencana dan R aktual tidak bisa dihitung"
+                          >
+                            lengkapi SL
+                          </button>
+                        ) : d.actualR != null ? rVal(d.actualR) : '—'}
                       </td>
                       <td className={'mono ' + toneClass(d.netPnl)} style={{ textAlign: 'right', paddingRight: 16.8, fontWeight: 500 }}>
                         {money(d.netPnl)} {d.outcome === 'be' && <span style={{ fontSize: 10 }}>BE</span>}
@@ -393,6 +409,11 @@ export default function Dashboard({ trades, allTrades, settings, onNew, onEdit, 
       </div>
     </>
   )
+}
+
+/** Trade hasil sync yang belum punya SL — petunjuk bertahan sampai SL diisi (F6). */
+function needsSl(t) {
+  return t.source === 'binance' && (t.sl == null || t.sl === '')
 }
 
 function Stat({ label, value }) {

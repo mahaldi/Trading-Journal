@@ -48,7 +48,7 @@ const emptyForm = () => ({
  * Untuk posisi yang masih berjalan, ketiga mode terakhir bisa ditukar langsung
  * di dalam panel lewat segmented "Edit rencana · Sebagian · Penuh".
  */
-export default function TradeForm({ open, mode = 'create', trade, pairIndex, tagSuggestions, tagStats, onSave, onPartialExit, onClose, onLightbox }) {
+export default function TradeForm({ open, mode = 'create', trade, focusField, pairIndex, tagSuggestions, tagStats, onSave, onPartialExit, onClose, onLightbox }) {
   const [f, setF] = useState(emptyForm)
   const [view, setView] = useState(mode)
   const [dirty, setDirty] = useState(false)
@@ -91,6 +91,18 @@ export default function TradeForm({ open, mode = 'create', trade, pairIndex, tag
     // Mode fill sudah mengubah status — menutup panel tanpa simpan perlu konfirmasi.
     setDirty(mode === 'fill')
   }, [open, trade, mode])
+
+  // "lengkapi SL" pada trade hasil sync membuka panel dengan fokus langsung di field itu.
+  useEffect(() => {
+    if (!open || !focusField) return
+    const id = setTimeout(() => {
+      const el = document.getElementById(`f-${focusField}`)
+      if (!el) return
+      el.scrollIntoView({ block: 'center' })
+      el.focus()
+    }, 200)
+    return () => clearTimeout(id)
+  }, [open, focusField, trade])
 
   const set = (patch) => {
     setF((prev) => ({ ...prev, ...patch }))
@@ -174,6 +186,9 @@ export default function TradeForm({ open, mode = 'create', trade, pairIndex, tag
       closeNotes: f.closeNotes,
       shots: normalizeShots(f.shots),
       history,
+      // Asal data & nomor order Binance — dipakai sync berikutnya untuk mencocokkan.
+      ...(f.source ? { source: f.source } : {}),
+      ...(f.binanceOrders?.length ? { binanceOrders: f.binanceOrders } : {}),
     }, isNew)
   }
 
@@ -315,6 +330,8 @@ export default function TradeForm({ open, mode = 'create', trade, pairIndex, tag
                 <div className="field">
                   <label htmlFor="f-tf">Timeframe</label>
                   <select id="f-tf" className="input mono" value={f.timeframe} onChange={(e) => set({ timeframe: e.target.value })}>
+                    {/* Trade hasil sync belum punya timeframe — tidak ada di file Binance. */}
+                    {!f.timeframe && <option value="">—</option>}
                     {TIMEFRAMES.map((tf) => <option key={tf} value={tf}>{tf}</option>)}
                   </select>
                 </div>

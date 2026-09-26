@@ -5,6 +5,7 @@ import Stats from './pages/Stats'
 import Tags from './pages/Tags'
 import Notes from './pages/Notes'
 import TradeForm from './components/TradeForm'
+import { SyncUploadDialog, SyncPreviewBar, SyncPreview, SyncConfirm, useSyncPreview } from './components/BinanceSync'
 import { Segmented, Lightbox, Confirm } from './components/ui'
 import {
   loadTrades, saveTrades, loadSettings, saveSettings, loadNotes, saveNotes,
@@ -16,6 +17,7 @@ import { allTags, applyPartialExit, effectiveDate, tagLibrary } from './lib/calc
 import { buildTagStats } from './lib/tags'
 import { fileSize, price as fmtPrice } from './lib/format'
 import { NOTE_TYPES, blankNote, imageBlocks, notesByTrade, notesByDate, togglePin } from './lib/notes'
+import { applySync } from './lib/binanceSync'
 
 const PAGES = [
   { key: 'dashboard', label: 'Dashboard' },
@@ -41,13 +43,20 @@ export default function App() {
 
   const [page, setPage] = useState('dashboard')
   const [range, setRange] = useState('all')
-  const [form, setForm] = useState({ open: false, mode: 'create', trade: null })
+  const [form, setForm] = useState({ open: false, mode: 'create', trade: null, focus: null })
   const [lightbox, setLightbox] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
   // Open order yang ditekan "Tutup trade" — belum ada hasil untuk diisi.
   const [confirmOrder, setConfirmOrder] = useState(null)
   const [newTradeId, setNewTradeId] = useState(null)
   const [showSettings, setShowSettings] = useState(false)
+
+  // Sync Order History Binance: dialog unggah → pratinjau → konfirmasi.
+  // Selama pratinjau, `trades` belum disentuh sama sekali.
+  const [syncDialog, setSyncDialog] = useState(false)
+  const [sync, setSync] = useState(null) // { fileName, parsed, skipped: Set, decisions: {} }
+  const [syncConfirm, setSyncConfirm] = useState(false)
+  const syncPreview = useSyncPreview(sync, trades)
 
   const [notes, setNotes] = useState([])
   const [notesSave, setNotesSave] = useState('idle')
@@ -135,7 +144,7 @@ export default function App() {
   /* ── pintasan: N membuka panel entri ── */
   useEffect(() => {
     function onKey(e) {
-      if (form.open || confirmDelete || confirmOrder || showSettings || confirmNoteDelete) return
+      if (form.open || confirmDelete || confirmOrder || showSettings || confirmNoteDelete || syncDialog || sync) return
       const tag = document.activeElement?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
       if (e.key === 'n' || e.key === 'N') {
@@ -145,7 +154,7 @@ export default function App() {
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [form.open, confirmDelete, confirmOrder, showSettings, confirmNoteDelete])
+  }, [form.open, confirmDelete, confirmOrder, showSettings, confirmNoteDelete, syncDialog, sync])
 
   const pairIndex = useMemo(() => buildPairIndex(trades), [trades])
   const tagSuggestions = useMemo(() => allTags(trades), [trades])
@@ -169,7 +178,8 @@ export default function App() {
   /* ─────────────────────────── aksi trade ─────────────────────────── */
 
   const openCreate = useCallback(() => setForm({ open: true, mode: 'create', trade: null }), [])
-  const openEdit = useCallback((t) => setForm({ open: true, mode: 'edit', trade: t }), [])
+  // `focus` membuka panel dengan kursor langsung di satu field (mis. "lengkapi SL" → SL).
+  const openEdit = useCallback((t, opts) => setForm({ open: true, mode: 'edit', trade: t, focus: opts?.focus || null }), [])
   // Tombol "Tutup trade" sama di semua status, tapi pada open order ia
   // membuka konfirmasi — bukan panel hasil.
   const openClose = useCallback((t) => {
@@ -219,6 +229,56 @@ export default function App() {
     setConfirmDelete(null)
     setConfirmOrder(null)
     setTimeout(refreshStatus, 600)
+  }
+
+  /* ─────────────────────────── sync Binance ─────────────────────────── */
+
+  function startSyncPreview({ fileName, parsed }) {
+    setSyncDialog(false)
+    setSync({ fileName, parsed, skipped: new Set(), decisions: {} })
+    setPage('dashboard')
+    window.scrollTo(0, 0)
+  }
+
+  const toggleSyncRow = useCallback((id) => {
+    setSync((s) => {
+      const skipped = new Set(s.skipped)
+      if (skipped.has(id)) skipped.delete(id)
+      else skipped.add(id)
+      return { ...s, skipped }
+    })
+  }, [])
+
+  const decideSyncReview = useCallback((id, decision) => {
+    setSync((s) => {
+      const decisions = { ...s.decisions }
+      if (decision) decisions[id] = decision
+      else delete decisions[id]
+      return { ...s, decisions }
+    })
+  }, [])
+
+  function requestSyncApply() {
+    if (!syncPreview.selected.length) {
+      setSync(null)
+      return
+    }
+    setSyncConfirm(true)
+  }
+
+  /** Satu-satunya titik di mana hasil sync benar-benar ditulis ke trades.json. */
+  function applySyncNow() {
+    const rows = syncPreview.selected
+    const next = applySync(trades, syncPreview.plan, rows)
+    setTrades(next)
+    setSyncConfirm(false)
+    setSync(null)
+    setPage('dashboard')
+    const firstNew = rows.find((r) => r.kind === 'new')?.after?.id
+    if (firstNew) {
+      setNewTradeId(firstNew)
+      setTimeout(() => setNewTradeId(null), 1600)
+    }
   }
 
   /* ─────────────────────────── aksi catatan ─────────────────────────── */
@@ -308,18 +368,29 @@ export default function App() {
 
   return (
     <>
-      <div className="nav">
+      <div className={sync ? 'sync-sticky' : undefined}>
+      {sync && (
+        <SyncPreviewBar
+          fileName={sync.fileName}
+          period={sync.parsed.period}
+          count={syncPreview.selected.length}
+          onCancel={() => setSync(null)}
+          onApply={requestSyncApply}
+        />
+      )}
+      <div className={'nav' + (sync ? ' is-locked' : '')}>
         <span className="nav-brand">My Trading Journey</span>
         {PAGES.map((p) => (
           <button
             key={p.key}
             className={'nav-link' + (page === p.key ? ' is-active' : '')}
             onClick={() => setPage(p.key)}
+            disabled={!!sync}
           >
             {p.label}
           </button>
         ))}
-        {page !== 'calendar' && page !== 'notes' && (
+        {!sync && page !== 'calendar' && page !== 'notes' && (
           <Segmented options={RANGES} value={range} onChange={setRange} small style={{ marginLeft: 'var(--space-4)' }} />
         )}
 
@@ -355,14 +426,34 @@ export default function App() {
             )}
           </span>
         ) : (
-          <button className="btn btn-primary" onClick={openCreate}>
-            + Trade Baru <span className="kbd">N</span>
-          </button>
+          <>
+            <button
+              className="btn btn-secondary"
+              onClick={() => setSyncDialog(true)}
+              disabled={!!sync}
+              title="Impor Futures Order History (.xlsx) dari Binance"
+            >
+              ⇪ Sync Binance
+            </button>
+            <button className="btn btn-primary" onClick={openCreate} disabled={!!sync}>
+              + Trade Baru <span className="kbd">N</span>
+            </button>
+          </>
         )}
+      </div>
       </div>
 
       <div className={'page' + (page === 'notes' ? ' page-notes' : '')}>
-        {page === 'dashboard' && (
+        {sync && syncPreview.plan && (
+          <SyncPreview
+            trades={trades}
+            sync={sync}
+            preview={syncPreview}
+            onToggle={toggleSyncRow}
+            onDecide={decideSyncReview}
+          />
+        )}
+        {!sync && page === 'dashboard' && (
           <Dashboard
             trades={ranged}
             allTrades={trades}
@@ -378,10 +469,10 @@ export default function App() {
             onOpenNote={openNote}
           />
         )}
-        {page === 'calendar' && (
+        {!sync && page === 'calendar' && (
           <Calendar trades={trades} onPickTrade={openEdit} notesByDate={dateNotes} onOpenNote={openNote} />
         )}
-        {page === 'notes' && (
+        {!sync && page === 'notes' && (
           <Notes
             notes={notes}
             trades={trades}
@@ -398,8 +489,8 @@ export default function App() {
             onLightbox={setLightbox}
           />
         )}
-        {page === 'stats' && <Stats trades={ranged} />}
-        {page === 'tags' && (
+        {!sync && page === 'stats' && <Stats trades={ranged} />}
+        {!sync && page === 'tags' && (
           <Tags trades={ranged} onRenameTag={renameTag} onMergeTag={mergeTag} onDeleteTag={deleteTag} />
         )}
       </div>
@@ -408,6 +499,7 @@ export default function App() {
         open={form.open}
         mode={form.mode}
         trade={form.trade}
+        focusField={form.focus}
         pairIndex={pairIndex}
         tagSuggestions={tagSuggestions}
         tagStats={tagStats}
@@ -418,6 +510,15 @@ export default function App() {
       />
 
       <Lightbox view={lightbox} onClose={() => setLightbox(null)} />
+
+      <SyncUploadDialog open={syncDialog} onCancel={() => setSyncDialog(false)} onPreview={startSyncPreview} />
+
+      <SyncConfirm
+        open={syncConfirm}
+        rows={syncPreview.selected}
+        onBack={() => setSyncConfirm(false)}
+        onApply={applySyncNow}
+      />
 
       <Confirm
         open={!!confirmDelete}
